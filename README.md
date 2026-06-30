@@ -1,7 +1,9 @@
 # dundee
 a set of codes for getting **dee**duplication of photo collections **done**
 
-Has three phases: inventory, analyze, and move
+Targets Synology Photos SMB mounted to a Mac
+directory, but should work for other kinds of collections under a read-only `library_root`
+directory. Has three phases: inventory, analyze, and move. 
 
 ## **inventory**
 
