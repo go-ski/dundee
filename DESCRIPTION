@@ -1,0 +1,30 @@
+Package: dundee
+Title: Deduplication of Photo Collections, Done
+Version: 0.0.0.9000
+Authors@R:
+    person("dundee", "authors", role = c("aut", "cre"),
+           email = "noreply@example.com")
+Description: A three-phase pipeline (inventory, analyze, move) to find and
+    relocate duplicate and near-duplicate photos in a large, read-only photo
+    library. Inventory fingerprints every photo into a SQLite store; analyze
+    clusters exact and near duplicates and serves a Shiny review app; move
+    relocates preferred and non-preferred copies server-side. Built with R
+    and shell only.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.1)
+Imports:
+    DBI,
+    RSQLite,
+    base64enc,
+    yaml
+Suggests:
+    shiny,
+    bslib,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+SystemRequirements: libvips (vips, vipsheader, vipsthumbnail), exiftool,
+    b3sum or shasum, sqlite3, ssh, a POSIX shell with find/stat/awk/sort/xargs
