@@ -57,6 +57,11 @@ from the source tree (the scripts fall back to sourcing `R/`).
 
 ```sh
 cp config.example.yml config.yml     # then edit paths, ssh target, thresholds
+    # To mount shared Synology photos directory in read-only mode: 
+    # mkdir $HOME/photo-ro
+    # mount_smbfs -o rdonly //<username>@y<yourphotoserver>.local/photos "$HOME/photo-ro" 
+    # Or make photo-ro point to your top level photo directory     
+    #        
 ./run.sh preflight                   # verify external tools are present
 
 # Phase 1 — inventory (enumerate -> resume-filter -> fingerprint -> merge)
