@@ -1,4 +1,4 @@
-library_root: /Volumes/photo
+library_root: "$HOME/photo-ro"
 work_dir: work
 db_path: dundee.sqlite
 temp_dir: /tmp/dundee
