@@ -2,8 +2,8 @@ Package: dundee
 Title: Deduplication of Photo Collections, Done
 Version: 0.0.0.9000
 Authors@R:
-    person("dundee", "authors", role = c("aut", "cre"),
-           email = "noreply@example.com")
+    person("dundee", "George Ostrouchov", role = c("aut", "cre"),
+           email = "go@tennessee.edu")
 Description: A three-phase pipeline (inventory, analyze, move) to find and
     relocate duplicate and near-duplicate photos in a large, read-only photo
     library. Inventory fingerprints every photo into a SQLite store; analyze
