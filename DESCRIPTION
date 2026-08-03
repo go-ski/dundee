@@ -24,7 +24,10 @@ Imports:
 Suggests:
     shiny,
     bslib,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    pkgload
 Config/testthat/edition: 3
 SystemRequirements: libvips (vips, vipsheader, vipsthumbnail), exiftool,
     b3sum or shasum, sqlite3, ssh, a POSIX shell with find/stat/awk/sort/xargs
+URL: https://github.com/go-ski/dundee
+BugReports: https://github.com/go-ski/dundee/issues
