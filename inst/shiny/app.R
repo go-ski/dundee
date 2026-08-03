@@ -6,18 +6,16 @@ library(shiny)
 library(bslib)
 library(DBI)
 
-# --- load dundee (installed package, else source the dev tree) ---
-if (requireNamespace("dundee", quietly = TRUE)) {
-  library(dundee)
-} else {
-  here <- normalizePath(file.path("..", ".."))
-  for (f in list.files(file.path(here, "R"), pattern = "\\.R$",
-                       full.names = TRUE)) source(f)
+if (!requireNamespace("dundee", quietly = TRUE)) {
+  stop("dundee is not installed. Launch the app with dundee::dd_app().")
 }
+library(dundee)
 
+# dd_app() writes a fully-resolved config (absolute paths) and points
+# DUNDEE_CONFIG at it, because runApp() has already changed the working
+# directory to this folder.
 cfg_path <- Sys.getenv("DUNDEE_CONFIG", "config.yml")
 cfg <- dd_config(cfg_path, require_library = FALSE)
-
 con <- dd_db_connect(cfg)
 dd_db_init(con)
 onStop(function() DBI::dbDisconnect(con))
