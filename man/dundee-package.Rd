@@ -8,6 +8,14 @@
 \description{
 A three-phase pipeline (inventory, analyze, move) to find and relocate duplicate and near-duplicate photos in a large, read-only photo library. Inventory fingerprints every photo into a SQLite store; analyze clusters exact and near duplicates and serves a Shiny review app; move relocates preferred and non-preferred copies server-side. Built with R and shell only.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/go-ski/dundee}
+  \item Report bugs at \url{https://github.com/go-ski/dundee/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: dundee George Ostrouchov \email{go@tennessee.edu}
 
