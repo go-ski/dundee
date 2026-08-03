@@ -54,3 +54,6 @@ config.yml
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+.Rproj.user
+.DS_Store
+.quarto
