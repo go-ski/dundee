@@ -9,7 +9,7 @@
 A three-phase pipeline (inventory, analyze, move) to find and relocate duplicate and near-duplicate photos in a large, read-only photo library. Inventory fingerprints every photo into a SQLite store; analyze clusters exact and near duplicates and serves a Shiny review app; move relocates preferred and non-preferred copies server-side. Built with R and shell only.
 }
 \author{
-\strong{Maintainer}: dundee authors \email{noreply@example.com}
+\strong{Maintainer}: dundee George Ostrouchov \email{go@tennessee.edu}
 
 }
 \keyword{internal}
