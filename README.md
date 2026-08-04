@@ -53,18 +53,15 @@ R packages: `DBI`, `RSQLite`, `base64enc`, `yaml` (plus `shiny`, `bslib` for the
 review app). Install the package once with `R CMD INSTALL .`, or run directly
 from the source tree (the scripts fall back to sourcing `R/`).
 
-## Usage
+## If using for Synology Photos
 
+Mount shared Synology photos directory in read-only mode to photo-ro: 
 ```sh
-cp config.example.yml config.yml     # then edit paths, ssh target, thresholds
-    # To mount shared Synology photos directory in read-only mode: 
-    # mkdir $HOME/photo-ro
-    # mount_smbfs -o rdonly //<username>@y<yourphotoserver>.local/photos "$HOME/photo-ro" 
-    # Or make photo-ro point to your top level photo directory     
-    #        
+mkdir $HOME/photo-ro
+mount_smbfs -o rdonly //<username>@y<yourphotoserver>.local/photos "$HOME/photo-ro" 
 ```
 
-### From an R console
+### Usage From an R console
 
 dundee is an installable R package, so every stage can be driven directly from
 R, e.g. from Positron/RStudio:
@@ -91,7 +88,7 @@ dd_run_move("config.yml", execute = TRUE)
 `dd_config()`. Add `quiet = TRUE` to any call to suppress phase banners and
 progress output.
 
-### From the terminal (shell)
+### Usage From the terminal (shell)
 
 `run.sh` is a thin wrapper around the same package; use it when you'd rather
 stay in a shell than an R session:

@@ -3,5 +3,5 @@
 ^dev-test\.R$
 ^config\.example\.yml$
 ^work$
-^^\\.github$$
+^^\\.github$
 ^LICENSE\.md$

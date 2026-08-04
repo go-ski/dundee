@@ -17,7 +17,7 @@ Useful links:
 
 }
 \author{
-\strong{Maintainer}: dundee George Ostrouchov \email{go@tennessee.edu}
+\strong{Maintainer}: George Ostrouchov \email{go@tennessee.edu}
 
 }
 \keyword{internal}
