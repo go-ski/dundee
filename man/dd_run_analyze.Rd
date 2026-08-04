@@ -4,10 +4,12 @@
 \alias{dd_run_analyze}
 \title{Run the analyze phase.}
 \usage{
-dd_run_analyze(config = "config.yml")
+dd_run_analyze(config = "config.yml", quiet = FALSE)
 }
 \arguments{
 \item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}
+
+\item{quiet}{Logical; suppress phase/progress feedback.}
 }
 \value{
 The group membership data frame, invisibly.

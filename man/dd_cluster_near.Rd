@@ -4,7 +4,7 @@
 \alias{dd_cluster_near}
 \title{Near-duplicate groups via LSH blocking + Hamming threshold.}
 \usage{
-dd_cluster_near(photos, threshold = 5L, bands = 8L, nbits = 64L)
+dd_cluster_near(photos, threshold = 5L, bands = 8L, nbits = 64L, quiet = TRUE)
 }
 \arguments{
 \item{photos}{A data.frame with \code{photo_id} and \code{fingerprint} (hex).}
@@ -14,6 +14,8 @@ dd_cluster_near(photos, threshold = 5L, bands = 8L, nbits = 64L)
 \item{bands}{Number of LSH bands.}
 
 \item{nbits}{Fingerprint length in bits.}
+
+\item{quiet}{Logical; suppress the per-band progress bar.}
 }
 \value{
 A data.frame \code{photo_id}, \code{group_key} (component id, prefixed "near").

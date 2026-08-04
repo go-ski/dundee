@@ -62,6 +62,41 @@ cp config.example.yml config.yml     # then edit paths, ssh target, thresholds
     # mount_smbfs -o rdonly //<username>@y<yourphotoserver>.local/photos "$HOME/photo-ro" 
     # Or make photo-ro point to your top level photo directory     
     #        
+```
+
+### From an R console
+
+dundee is an installable R package, so every stage can be driven directly from
+R, e.g. from Positron/RStudio:
+
+```r
+library(dundee)                      # or devtools::load_all() from source
+
+dd_preflight()
+
+# Phase 1 — inventory (enumerate -> resume-filter -> fingerprint -> merge)
+dd_run_inventory("config.yml")
+
+# Phase 2 — analyze, then review
+dd_run_analyze("config.yml")
+dd_app("config.yml")                 # opens the Shiny review app
+
+# Phase 3 — plan (dry run), review the script, then execute server-side
+dd_run_plan("config.yml", bulk = TRUE)
+dd_run_move("config.yml")            # dry run
+dd_run_move("config.yml", execute = TRUE)
+```
+
+`config` may be a path (as above) or an already-resolved list from
+`dd_config()`. Add `quiet = TRUE` to any call to suppress phase banners and
+progress output.
+
+### From the terminal (shell)
+
+`run.sh` is a thin wrapper around the same package; use it when you'd rather
+stay in a shell than an R session:
+
+```sh
 ./run.sh preflight                   # verify external tools are present
 
 # Phase 1 — inventory (enumerate -> resume-filter -> fingerprint -> merge)
@@ -77,14 +112,31 @@ cp config.example.yml config.yml     # then edit paths, ssh target, thresholds
 ./run.sh move config.yml --execute   # performs on-volume mv over SSH
 ```
 
+Pass `--quiet` to any command to suppress phase banners and progress output.
+
 Every stage is idempotent and resumable: re-running inventory reads nothing for
-unchanged files, and the move script skips sources already relocated.
+unchanged files, and the move script skips sources already relocated. Each
+stage prints a phase banner plus progress as it runs (a live count during
+fingerprinting, progress bars for merge/analyze/plan) whether run from R or the
+shell.
 
 ## Key configuration
 
-See `config.example.yml`. The most important fields:
+See `config.example.yml`. Only **two directories** are ever user-controlled:
 
-- `library_root` — the read-only SMB mount of the library on the Mac.
+- `library_root` — the read-only SMB mount of the library on the Mac. Never
+  written to.
+- `work_dir` — everything dundee writes locally: the SQLite store, staging
+  shards, thumbnail cache, and the fingerprint worker's temp scratch space all
+  live under here. `dd_config()` refuses to run if `work_dir` is the same as,
+  nested inside, or contains `library_root`.
+
+(`db_path` is just the store's *filename* under `work_dir`, not a separate
+directory; `temp_dir` is no longer configurable — it's always
+`<work_dir>/tmp`.)
+
+Everything else is tuning, not paths:
+
 - `nas_root` — the Synology server-side path the SMB mount corresponds to
   (e.g. `/Volumes/photo` ↔ `/volume1/photo`).
 - `preferred_root` / `nonpreferred_root` — server-side output trees.

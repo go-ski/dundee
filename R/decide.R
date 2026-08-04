@@ -51,9 +51,10 @@ dd_choose_preferred <- function(group_df, cfg) {
 #' @param con A DBIConnection.
 #' @param cfg A config list.
 #' @param overwrite Logical; re-decide groups that already have decisions.
+#' @param quiet Logical; suppress the per-group progress bar.
 #' @return Number of decision rows written, invisibly.
 #' @export
-dd_apply_bulk_decisions <- function(con, cfg, overwrite = FALSE) {
+dd_apply_bulk_decisions <- function(con, cfg, overwrite = FALSE, quiet = FALSE) {
   gp <- DBI::dbGetQuery(con, "
     SELECT g.group_id, g.photo_id, p.width, p.height, p.size, p.meta_count,
            p.capture_time, p.rel_path
@@ -61,8 +62,11 @@ dd_apply_bulk_decisions <- function(con, cfg, overwrite = FALSE) {
   if (nrow(gp) == 0L) return(invisible(0L))
 
   decided <- DBI::dbGetQuery(con, "SELECT DISTINCT group_id FROM decisions")$group_id
+  gids <- unique(gp$group_id)
   written <- 0L
-  for (gid in unique(gp$group_id)) {
+  pb <- dd_progress(length(gids), "decide", quiet = quiet)
+  for (gid in gids) {
+    pb$tick()
     if (!overwrite && gid %in% decided) next
     sub <- gp[gp$group_id == gid, , drop = FALSE]
     pref <- dd_choose_preferred(sub, cfg)
@@ -71,6 +75,7 @@ dd_apply_bulk_decisions <- function(con, cfg, overwrite = FALSE) {
       preferred = as.integer(sub$photo_id == pref), decided_by = "bulk"))
     written <- written + nrow(sub)
   }
+  pb$done()
   invisible(written)
 }
 

@@ -4,12 +4,14 @@
 \alias{dd_analyze}
 \title{Build duplicate groups from the photos table and write the \code{groups} table.}
 \usage{
-dd_analyze(con, cfg)
+dd_analyze(con, cfg, quiet = FALSE)
 }
 \arguments{
 \item{con}{A DBIConnection.}
 
 \item{cfg}{A config list (thresholds, bands, fingerprint geometry).}
+
+\item{quiet}{Logical; suppress sub-step and progress feedback.}
 }
 \value{
 A data.frame of the written group membership, invisibly.

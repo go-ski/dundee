@@ -4,12 +4,14 @@
 \alias{dd_import_staging}
 \title{Import all staging + error files from the staging dir into the store.}
 \usage{
-dd_import_staging(con, cfg)
+dd_import_staging(con, cfg, quiet = FALSE)
 }
 \arguments{
 \item{con}{A DBIConnection.}
 
 \item{cfg}{A config list (uses \code{cfg$staging_dir}).}
+
+\item{quiet}{Logical; suppress the merge progress bar.}
 }
 \value{
 A list with counts \code{photos} and \code{errors}, invisibly.

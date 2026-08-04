@@ -7,14 +7,17 @@
 #'
 #' @param con A DBIConnection.
 #' @param cfg A config list (thresholds, bands, fingerprint geometry).
+#' @param quiet Logical; suppress sub-step and progress feedback.
 #' @return A data.frame of the written group membership, invisibly.
 #' @export
-dd_analyze <- function(con, cfg) {
+dd_analyze <- function(con, cfg, quiet = FALSE) {
   photos <- DBI::dbGetQuery(
     con, "SELECT photo_id, pixel_hash, fingerprint FROM photos"
   )
+  dd_step(sprintf("loaded %d photo(s)", nrow(photos)), quiet = quiet)
   nbits <- cfg$fingerprint_grid * cfg$fingerprint_grid
 
+  dd_step("building exact-duplicate groups", quiet = quiet)
   exact <- dd_cluster_exact(photos)
   exact_groups <- if (nrow(exact)) {
     data.frame(photo_id = exact$photo_id, tier = "exact",
@@ -25,8 +28,10 @@ dd_analyze <- function(con, cfg) {
   }
 
   remaining <- photos[!photos$photo_id %in% exact$photo_id, , drop = FALSE]
+  dd_step(sprintf("near-duplicate clustering over %d remaining photo(s)",
+                  nrow(remaining)), quiet = quiet)
   near <- dd_cluster_near(remaining, threshold = cfg$hamming_threshold,
-                          bands = cfg$lsh_bands, nbits = nbits)
+                          bands = cfg$lsh_bands, nbits = nbits, quiet = quiet)
   near_groups <- if (nrow(near)) {
     data.frame(photo_id = near$photo_id, tier = "near",
                key = near$group_key, stringsAsFactors = FALSE)

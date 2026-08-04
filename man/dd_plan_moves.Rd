@@ -8,7 +8,8 @@ dd_plan_moves(
   con,
   cfg,
   manifest_path = file.path(cfg$work_dir, "moves.tsv"),
-  script_path = file.path(cfg$work_dir, "moves.sh")
+  script_path = file.path(cfg$work_dir, "moves.sh"),
+  quiet = FALSE
 )
 }
 \arguments{
@@ -19,6 +20,8 @@ dd_plan_moves(
 \item{manifest_path}{Output TSV path (default under \code{work_dir}).}
 
 \item{script_path}{Output shell script path (default under \code{work_dir}).}
+
+\item{quiet}{Logical; suppress the per-row progress bar.}
 }
 \value{
 The manifest data.frame, invisibly.

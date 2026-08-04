@@ -43,13 +43,15 @@ dd_map_dest <- function(rel_path, preferred, cfg) {
 #' @param cfg A config list.
 #' @param manifest_path Output TSV path (default under `work_dir`).
 #' @param script_path Output shell script path (default under `work_dir`).
+#' @param quiet Logical; suppress the per-row progress bar.
 #' @return The manifest data.frame, invisibly.
 #' @export
 dd_plan_moves <- function(con, cfg,
                           manifest_path = file.path(cfg$work_dir,
                                                     "moves.tsv"),
                           script_path = file.path(cfg$work_dir,
-                                                  "moves.sh")) {
+                                                  "moves.sh"),
+                          quiet = FALSE) {
   dec <- DBI::dbGetQuery(con, "
     SELECT d.photo_id, d.preferred, p.path, p.rel_path
       FROM decisions d JOIN photos p USING (photo_id)
@@ -78,12 +80,15 @@ dd_plan_moves <- function(con, cfg,
     "set -euo pipefail",
     ""
   )
+  pb <- dd_progress(nrow(manifest), "plan", quiet = quiet)
   for (i in seq_len(nrow(manifest))) {
     s <- shq(manifest$src[i]); d <- shq(manifest$dest[i])
     lines <- c(lines,
       sprintf("if [ -e %s ]; then mkdir -p \"$(dirname %s)\" && mv -n %s %s; fi",
               s, d, s, d))
+    pb$tick()
   }
+  pb$done()
   writeLines(lines, script_path)
   Sys.chmod(script_path, "0755")
 

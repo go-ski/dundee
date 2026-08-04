@@ -49,11 +49,13 @@ unset 'extmatch[${#extmatch[@]}-1]'
 
 : > "$out"
 # Prune cruft dirs, then match files by extension; NUL-delimited for safety.
+# Pipe the emitted rows through dd_progress_spin so a running count is shown
+# during long scans (total is unknown until the find completes).
 find "$root" \( "${prune[@]}" \) -prune -o \
      -type f \( "${extmatch[@]}" \) -print0 |
 while IFS= read -r -d '' f; do
   printf '%s\t%s\t%s\t%s\n' \
     "$(dd_b64 "$f")" "$(dd_size "$f")" "$(dd_mtime "$f")" "$(dd_inode "$f")"
-done >> "$out"
+done | dd_progress_spin "enumerate" >> "$out"
 
 echo "enumerated $(wc -l < "$out") files -> $out"

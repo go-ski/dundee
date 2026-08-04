@@ -15,11 +15,14 @@ dd_script <- function(name) {
   path
 }
 
-# Run a shell stage, streaming its output; error on non-zero exit.
+# Run a shell stage, streaming its output; error on non-zero exit. When quiet,
+# stdout is discarded and DD_PROGRESS=0 disables the shell progress helpers
+# (which write to stderr and would otherwise leak past the stdout redirect).
 dd_sh <- function(name, args = character(), quiet = FALSE) {
   args <- shQuote(as.character(args))
   status <- system2("bash", c(shQuote(dd_script(name)), args),
-                    stdout = if (quiet) FALSE else "")
+                    stdout = if (quiet) FALSE else "",
+                    env = if (quiet) "DD_PROGRESS=0" else character())
   if (!identical(as.integer(status), 0L)) {
     stop(sprintf("dundee: %s exited with status %s", name, status),
          call. = FALSE)
@@ -66,6 +69,7 @@ dd_config_tempfile <- function(cfg) {
 #' @export
 dd_preflight <- function(quiet = FALSE) {
   ok <- TRUE
+  dd_phase("preflight", quiet = quiet)
 
   status <- system2("bash", shQuote(dd_script("00-preflight.sh")),
                     stdout = if (quiet) FALSE else "")
@@ -122,15 +126,18 @@ dd_run_inventory <- function(config = "config.yml", parallel = NULL,
   cfg <- dd_as_config(config, require_library = TRUE)
   if (!is.null(parallel)) cfg$parallel <- as.integer(parallel)
 
+  dd_phase("inventory", quiet = quiet)
   dir.create(cfg$work_dir, recursive = TRUE, showWarnings = FALSE)
   enum <- file.path(cfg$work_dir, "enum.tsv")
   todo <- file.path(cfg$work_dir, "todo.nul")
 
+  dd_step("enumerating candidate photos", quiet = quiet)
   dd_sh("10-enumerate.sh",
         c(cfg$library_root, enum, cfg$extensions, "--", cfg$cruft),
         quiet = quiet)
   n_enum <- length(readLines(enum, warn = FALSE))
 
+  dd_step("resume-filtering against the store", quiet = quiet)
   n_todo <- dd_with_con(cfg, function(con) {
     dd_resume_todo(con, enum, todo)
   })
@@ -138,13 +145,16 @@ dd_run_inventory <- function(config = "config.yml", parallel = NULL,
                   n_todo, n_enum))
 
   if (n_todo > 0L) {
+    dd_step(sprintf("fingerprinting %d file(s) on %s worker(s)",
+                    n_todo, cfg$parallel), quiet = quiet)
     dd_sh("20-fingerprint.sh",
           c(todo, cfg$staging_dir, cfg$temp_dir, cfg$library_root,
-            cfg$parallel, cfg$fingerprint_grid),
+            cfg$parallel, cfg$fingerprint_grid, n_todo),
           quiet = quiet)
   }
 
-  res <- dd_with_con(cfg, function(con) dd_import_staging(con, cfg))
+  dd_step("merging staging results into the store", quiet = quiet)
+  res <- dd_with_con(cfg, function(con) dd_import_staging(con, cfg, quiet = quiet))
   message(sprintf("inventory: merged %d photo row(s), %d error row(s)",
                   res$photos, res$errors))
 
@@ -161,15 +171,17 @@ dd_run_inventory <- function(config = "config.yml", parallel = NULL,
 #' `groups` table.
 #'
 #' @param config Path to a YAML config, or a config list from [dd_config()].
+#' @param quiet Logical; suppress phase/progress feedback.
 #' @return The group membership data frame, invisibly.
 #' @examples
 #' \dontrun{
 #' dd_run_analyze("config.yml")
 #' }
 #' @export
-dd_run_analyze <- function(config = "config.yml") {
+dd_run_analyze <- function(config = "config.yml", quiet = FALSE) {
   cfg <- dd_as_config(config)
-  out <- dd_with_con(cfg, function(con) dd_analyze(con, cfg))
+  dd_phase("analyze", quiet = quiet)
+  out <- dd_with_con(cfg, function(con) dd_analyze(con, cfg, quiet = quiet))
   ngroups <- if (nrow(out)) length(unique(out$group_id)) else 0L
   message(sprintf("analyze: %d group(s) covering %d photo(s)",
                   ngroups, nrow(out)))
@@ -202,6 +214,7 @@ dd_app <- function(config = "config.yml", port = 7654L,
     stop("dundee: review app not found. Reinstall the package.", call. = FALSE)
   }
 
+  dd_phase("app")
   cfg <- dd_as_config(config)
   resolved <- dd_config_tempfile(cfg)
   old <- Sys.getenv("DUNDEE_CONFIG", unset = NA)
@@ -226,21 +239,25 @@ dd_app <- function(config = "config.yml", port = 7654L,
 #'
 #' @param config Path to a YAML config, or a config list from [dd_config()].
 #' @param bulk Logical; apply [dd_apply_bulk_decisions()] before planning.
+#' @param quiet Logical; suppress phase/progress feedback.
 #' @return The move plan, invisibly.
 #' @examples
 #' \dontrun{
 #' dd_run_plan("config.yml", bulk = TRUE)
 #' }
 #' @export
-dd_run_plan <- function(config = "config.yml", bulk = FALSE) {
+dd_run_plan <- function(config = "config.yml", bulk = FALSE, quiet = FALSE) {
   cfg <- dd_as_config(config)
   dd_require_move_config(cfg)
+  dd_phase("plan", quiet = quiet)
   out <- dd_with_con(cfg, function(con) {
     if (isTRUE(bulk)) {
-      n <- dd_apply_bulk_decisions(con, cfg)
+      dd_step("applying bulk preference decisions", quiet = quiet)
+      n <- dd_apply_bulk_decisions(con, cfg, quiet = quiet)
       message(sprintf("applied bulk decisions to %d undecided photo(s)", n))
     }
-    dd_plan_moves(con, cfg)
+    dd_step("planning moves", quiet = quiet)
+    dd_plan_moves(con, cfg, quiet = quiet)
   })
   invisible(out)
 }
@@ -263,6 +280,7 @@ dd_run_plan <- function(config = "config.yml", bulk = FALSE) {
 dd_run_move <- function(config = "config.yml", execute = FALSE) {
   cfg <- dd_as_config(config)
   dd_require_move_config(cfg)
+  dd_phase("move")
   script <- file.path(cfg$work_dir, "moves.sh")
   if (!file.exists(script)) {
     stop("dundee: no move script at ", script,
@@ -306,11 +324,12 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
   usage <- paste(
     "usage: run.sh <command> [config.yml] [options]",
     "  preflight                      check external tools and R packages",
-    "  inventory [config] [--parallel=N]",
-    "  analyze   [config]",
+    "  inventory [config] [--parallel=N] [--quiet]",
+    "  analyze   [config] [--quiet]",
     "  app       [config] [--port=N]",
-    "  plan      [config] [--bulk]",
+    "  plan      [config] [--bulk] [--quiet]",
     "  move      [config] [--execute]",
+    "  (--quiet suppresses phase banners and progress output)",
     sep = "\n"
   )
   if (!length(args) || args[[1]] %in% c("help", "-h", "--help")) {
@@ -322,6 +341,7 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
   rest <- args[-1]
   flags <- grepl("^--", rest)
   cfg_path <- if (any(!flags)) rest[!flags][[1]] else "config.yml"
+  quiet <- "--quiet" %in% rest
   opt <- function(name, default = NULL) {
     hit <- grep(paste0("^--", name, "="), rest, value = TRUE)
     if (length(hit)) sub(paste0("^--", name, "="), "", hit[[1]]) else default
@@ -329,14 +349,14 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
 
   out <- switch(
     cmd,
-    preflight = dd_preflight(),
+    preflight = dd_preflight(quiet = quiet),
     inventory = dd_run_inventory(cfg_path,
-                                 parallel = opt("parallel")),
-    analyze   = dd_run_analyze(cfg_path),
+                                 parallel = opt("parallel"), quiet = quiet),
+    analyze   = dd_run_analyze(cfg_path, quiet = quiet),
     app       = dd_app(cfg_path,
                        port = as.integer(opt("port", 7654L)),
                        launch_browser = TRUE),
-    plan      = dd_run_plan(cfg_path, bulk = "--bulk" %in% rest),
+    plan      = dd_run_plan(cfg_path, bulk = "--bulk" %in% rest, quiet = quiet),
     move      = dd_run_move(cfg_path, execute = "--execute" %in% rest),
     stop("dundee: unknown command '", cmd, "'.\n", usage, call. = FALSE)
   )

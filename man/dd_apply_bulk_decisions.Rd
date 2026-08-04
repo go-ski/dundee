@@ -4,7 +4,7 @@
 \alias{dd_apply_bulk_decisions}
 \title{Apply the bulk preference heuristic to every group lacking a decision.}
 \usage{
-dd_apply_bulk_decisions(con, cfg, overwrite = FALSE)
+dd_apply_bulk_decisions(con, cfg, overwrite = FALSE, quiet = FALSE)
 }
 \arguments{
 \item{con}{A DBIConnection.}
@@ -12,6 +12,8 @@ dd_apply_bulk_decisions(con, cfg, overwrite = FALSE)
 \item{cfg}{A config list.}
 
 \item{overwrite}{Logical; re-decide groups that already have decisions.}
+
+\item{quiet}{Logical; suppress the per-group progress bar.}
 }
 \value{
 Number of decision rows written, invisibly.

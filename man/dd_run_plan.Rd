@@ -4,12 +4,14 @@
 \alias{dd_run_plan}
 \title{Plan the Phase 3 moves.}
 \usage{
-dd_run_plan(config = "config.yml", bulk = FALSE)
+dd_run_plan(config = "config.yml", bulk = FALSE, quiet = FALSE)
 }
 \arguments{
 \item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}
 
 \item{bulk}{Logical; apply \code{\link[=dd_apply_bulk_decisions]{dd_apply_bulk_decisions()}} before planning.}
+
+\item{quiet}{Logical; suppress phase/progress feedback.}
 }
 \value{
 The move plan, invisibly.

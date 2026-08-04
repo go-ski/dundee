@@ -54,10 +54,11 @@ dd_cluster_exact <- function(photos) {
 # Internal: candidate pairs via LSH banding on the fingerprint bits. Two photos
 # are candidates if they share any band's exact sub-bit-pattern. Returns a
 # two-column matrix of row indices (into `df`).
-dd_lsh_candidates <- function(df, nbits, bands) {
+dd_lsh_candidates <- function(df, nbits, bands, quiet = TRUE) {
   band_size <- nbits %/% bands
   bitlist <- dd_fingerprint_bits(df$fingerprint, nbits = nbits)
   pairs <- list()
+  pb <- dd_progress(bands, "lsh bands", quiet = quiet)
   for (b in seq_len(bands)) {
     idx <- ((b - 1L) * band_size + 1L):(b * band_size)
     keys <- vapply(bitlist, function(bits) {
@@ -69,7 +70,9 @@ dd_lsh_candidates <- function(df, nbits, bands) {
         pairs[[length(pairs) + 1L]] <- t(utils::combn(grp, 2L))
       }
     }
+    pb$tick()
   }
+  pb$done()
   if (length(pairs) == 0L) return(matrix(integer(0), ncol = 2L))
   unique(do.call(rbind, pairs))
 }
@@ -80,16 +83,18 @@ dd_lsh_candidates <- function(df, nbits, bands) {
 #' @param threshold Inclusive Hamming distance threshold.
 #' @param bands Number of LSH bands.
 #' @param nbits Fingerprint length in bits.
+#' @param quiet Logical; suppress the per-band progress bar.
 #' @return A data.frame `photo_id`, `group_key` (component id, prefixed "near").
 #' @export
-dd_cluster_near <- function(photos, threshold = 5L, bands = 8L, nbits = 64L) {
+dd_cluster_near <- function(photos, threshold = 5L, bands = 8L, nbits = 64L,
+                            quiet = TRUE) {
   df <- photos[!is.na(photos$fingerprint) & nzchar(photos$fingerprint), ,
                drop = FALSE]
   n <- nrow(df)
   if (n < 2L) {
     return(data.frame(photo_id = integer(0), group_key = character(0)))
   }
-  cand <- dd_lsh_candidates(df, nbits = nbits, bands = bands)
+  cand <- dd_lsh_candidates(df, nbits = nbits, bands = bands, quiet = quiet)
   if (nrow(cand) == 0L) {
     return(data.frame(photo_id = integer(0), group_key = character(0)))
   }

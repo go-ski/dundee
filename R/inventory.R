@@ -68,16 +68,18 @@ dd_resume_todo <- function(con, enum_tsv, todo_path) {
 #'
 #' @param con A DBIConnection.
 #' @param cfg A config list (uses `cfg$staging_dir`).
+#' @param quiet Logical; suppress the merge progress bar.
 #' @return A list with counts `photos` and `errors`, invisibly.
 #' @export
-dd_import_staging <- function(con, cfg) {
+dd_import_staging <- function(con, cfg, quiet = FALSE) {
   now <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
 
   data_files <- list.files(cfg$staging_dir, pattern = "\\.tsv$",
                            full.names = TRUE)
   n_photos <- 0L
+  pb <- dd_progress(length(data_files), "merge", quiet = quiet)
   for (f in data_files) {
-    if (file.size(f) == 0L) next
+    if (file.size(f) == 0L) { pb$tick(); next }
     raw <- utils::read.table(
       f, sep = "\t", quote = "", comment.char = "", header = FALSE,
       col.names = dd_staging_cols, colClasses = "character",
@@ -106,7 +108,9 @@ dd_import_staging <- function(con, cfg) {
     df <- df[!duplicated(df$path, fromLast = TRUE), , drop = FALSE]
     n_photos <- n_photos + nrow(df)
     dd_db_upsert_photos(con, df)
+    pb$tick()
   }
+  pb$done()
 
   err_files <- list.files(cfg$staging_dir, pattern = "\\.err$",
                           full.names = TRUE)

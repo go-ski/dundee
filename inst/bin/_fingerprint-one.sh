@@ -24,6 +24,8 @@ b64rel="$(dd_b64 "$rel")"
 
 fail() {
   printf '%s\t%s\n' "$b64src" "$(dd_b64 "$1")" >> "$errf"
+  # One completion tick on stdout so the driver can count progress.
+  printf 'TICK\n'
   exit 0
 }
 
@@ -95,3 +97,8 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "${width:-}" "${height:-}" "$file_hash" "$pixel_hash" "$meta_hash" \
   "$fingerprint" "$(dd_b64 "$capture")" "$(dd_b64 "$camera")" "${meta_count:-0}" \
   >> "$stage"
+
+# One completion tick on stdout so the driver can count progress. A single
+# short printf stays within PIPE_BUF, so ticks from parallel workers do not
+# interleave and the count stays exact.
+printf 'TICK\n'

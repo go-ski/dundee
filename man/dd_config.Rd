@@ -15,5 +15,9 @@ dd_config(path = "config.yml", require_library = FALSE)
 A validated config list with absolute, resolved paths.
 }
 \description{
-Load and validate a dundee configuration.
+Only two directories are ever user-controlled: \code{library_root} (read-only
+source) and \code{work_dir} (everything dundee writes). The SQLite store, the
+fingerprint staging area, the thumbnail cache, and the fingerprinting
+worker's temp scratch space are all resolved under \code{work_dir} and are not
+independently configurable.
 }

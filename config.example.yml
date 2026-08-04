@@ -1,7 +1,6 @@
-library_root: "$HOME/photo-ro"
+library_root: /Volumes/photo
 work_dir: work
 db_path: dundee.sqlite
-temp_dir: /tmp/dundee
 parallel: 4
 extensions:
 - jpg
