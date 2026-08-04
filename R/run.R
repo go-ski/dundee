@@ -126,7 +126,8 @@ dd_run_inventory <- function(config = "config.yml", parallel = NULL,
   enum <- file.path(cfg$work_dir, "enum.tsv")
   todo <- file.path(cfg$work_dir, "todo.nul")
 
-  dd_sh("10-enumerate.sh", c(cfg$library_root, enum, cfg$extensions),
+  dd_sh("10-enumerate.sh",
+        c(cfg$library_root, enum, cfg$extensions, "--", cfg$cruft),
         quiet = quiet)
   n_enum <- length(readLines(enum, warn = FALSE))
 

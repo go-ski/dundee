@@ -4,7 +4,7 @@
 # safe for any filename):
 #   b64path <TAB> size <TAB> mtime <TAB> inode
 #
-# Usage: 10-enumerate.sh LIBRARY_ROOT OUT_TSV [ext1 ext2 ...]
+# Usage: 10-enumerate.sh LIBRARY_ROOT OUT_TSV [ext1 ext2 ... [-- cruft1 cruft2 ...]]
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/lib.sh"
@@ -12,7 +12,21 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="${1:?library root required}"
 out="${2:?output tsv required}"
 shift 2
-exts=("$@")
+
+# Split remaining args at "--" into exts and cruft.
+exts=()
+cruft=()
+in_cruft=false
+for arg in "$@"; do
+  if [ "$arg" = "--" ]; then
+    in_cruft=true
+  elif $in_cruft; then
+    cruft+=("$arg")
+  else
+    exts+=("$arg")
+  fi
+done
+
 if [ "${#exts[@]}" -eq 0 ]; then
   exts=(jpg jpeg jpe png gif bmp tif tiff webp heic heif avif \
         cr2 cr3 nef nrw arw sr2 srf raf rw2 orf dng pef raw x3f 3fr erf \
@@ -20,8 +34,10 @@ if [ "${#exts[@]}" -eq 0 ]; then
 fi
 
 # Build the cruft prune expression.
-cruft=(@eaDir '#recycle' '#snapshot' @tmp .@__thumb @sharebin .DS_Store \
-       Thumbs.db .Spotlight-V100 .TemporaryItems .Trashes .fseventsd)
+if [ "${#cruft[@]}" -eq 0 ]; then
+  cruft=(@eaDir '#recycle' '#snapshot' @tmp .@__thumb @sharebin .DS_Store \
+         Thumbs.db .Spotlight-V100 .TemporaryItems .Trashes .fseventsd)
+fi
 prune=()
 for c in "${cruft[@]}"; do prune+=(-name "$c" -o); done
 unset 'prune[${#prune[@]}-1]'   # drop trailing -o
