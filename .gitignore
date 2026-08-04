@@ -50,7 +50,6 @@ rsconnect/
 
 # dundee runtime artifacts and local config
 work/
-config.yml
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
