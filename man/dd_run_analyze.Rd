@@ -7,7 +7,7 @@
 dd_run_analyze(config = NULL, quiet = FALSE)
 }
 \arguments{
-\item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}
+\item{config}{A work directory, a config path, or a list from \code{\link[=dd_config]{dd_config()}}.}
 
 \item{quiet}{Logical; suppress phase/progress feedback.}
 }

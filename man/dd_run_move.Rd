@@ -7,7 +7,7 @@
 dd_run_move(config = NULL, execute = FALSE)
 }
 \arguments{
-\item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}
+\item{config}{A work directory, a config path, or a list from \code{\link[=dd_config]{dd_config()}}.}
 
 \item{execute}{Logical; perform the moves instead of describing them.}
 }

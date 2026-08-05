@@ -11,10 +11,10 @@ if (!requireNamespace("dundee", quietly = TRUE)) {
 }
 library(dundee)
 
-# dd_app() writes a fully-resolved config (absolute paths) and points
+# dd_app() writes <work_dir>/config.resolved.yml (absolute paths) and points
 # DUNDEE_CONFIG at it, because runApp() has already changed the working
-# directory to this folder.
-cfg_path <- Sys.getenv("DUNDEE_CONFIG", "config.yml")
+# directory to this folder. The file persists after the session, as provenance.
+cfg_path <- Sys.getenv("DUNDEE_CONFIG", "config.resolved.yml")
 cfg <- dd_config(cfg_path, require_library = FALSE)
 con <- dd_db_connect(cfg)
 dd_db_init(con)

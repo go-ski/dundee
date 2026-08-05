@@ -4,10 +4,12 @@
 \alias{dd_migrate}
 \title{Move a legacy \code{config.yml} into its work directory.}
 \usage{
-dd_migrate(path = "config.yml")
+dd_migrate(path = "config.yml", remove = FALSE)
 }
 \arguments{
 \item{path}{Existing config file written under the old convention.}
+
+\item{remove}{Delete the original after a successful copy.}
 }
 \value{
 The new work directory, invisibly.

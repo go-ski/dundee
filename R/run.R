@@ -104,7 +104,7 @@ dd_preflight <- function(quiet = FALSE) {
 #' merges the staged results into the SQLite store. Every step is idempotent,
 #' so the function may be re-run after an interruption.
 #'
-#' @param config Path to a YAML config, or a config list from [dd_config()].
+#' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param parallel Optional integer overriding `parallel` from the config.
 #' @param quiet Logical; suppress stage output from the shell workers.
 #' @return A list with `enumerated`, `todo`, `photos` and `errors` counts,
@@ -164,7 +164,7 @@ dd_run_inventory <- function(config = NULL, parallel = NULL,
 #' distance under `hamming_threshold`, blocked by LSH) and rewrites the
 #' `groups` table.
 #'
-#' @param config Path to a YAML config, or a config list from [dd_config()].
+#' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param quiet Logical; suppress phase/progress feedback.
 #' @return The group membership data frame, invisibly.
 #' @examples
@@ -188,7 +188,7 @@ dd_run_analyze <- function(config = NULL, quiet = FALSE) {
 #' The config is resolved to absolute paths before launching, because
 #' [shiny::runApp()] changes the working directory to the app folder.
 #'
-#' @param config Path to a YAML config, or a config list from [dd_config()].
+#' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param port Port to serve on.
 #' @param launch_browser Logical; open a browser window.
 #' @return The value of [shiny::runApp()], invisibly.
@@ -233,7 +233,7 @@ dd_app <- function(config = NULL, port = 7654L,
 #' then writes `moves.tsv` and a reviewable `moves.sh` under `work_dir`.
 #' Nothing is executed and nothing is written on the server.
 #'
-#' @param config Path to a YAML config, or a config list from [dd_config()].
+#' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param bulk Logical; apply [dd_apply_bulk_decisions()] before planning.
 #' @param quiet Logical; suppress phase/progress feedback.
 #' @return The move plan, invisibly.
@@ -265,7 +265,7 @@ dd_run_plan <- function(config = NULL, bulk = FALSE, quiet = FALSE) {
 #' `execute = TRUE` to perform the on-volume renames. The generated script is
 #' idempotent, so an interrupted run can simply be repeated.
 #'
-#' @param config Path to a YAML config, or a config list from [dd_config()].
+#' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param execute Logical; perform the moves instead of describing them.
 #' @return `TRUE`, invisibly.
 #' @examples
@@ -315,20 +315,26 @@ dd_require_move_config <- function(cfg) {
 #' @return Invisibly, the value of the dispatched stage.
 #' @examples
 #' \dontrun{
-#' dd_cli(c("analyze", "config.yml"))
+#' dd_cli(c("analyze", "~/dundee/family-photos"))
 #' }
 #' @export
 dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
   usage <- paste(
-    "usage: run.sh <command> [work_dir|config.yml] [options]",
-    "  (with no path, uses $DUNDEE_WORK, else ./config.yml)",
+    "usage: run.sh <command> [work_dir] [options]",
+    "",
+    "  init      <work_dir> --library=DIR [--no-edit]",
+    "                                 create a work directory + config.yml",
+    "  config    [work_dir] [--edit]  show (or edit) the config",
+    "  status    [work_dir]           what is done, and what is next",
     "  preflight                      check external tools and R packages",
-    "  inventory [config] [--parallel=N] [--quiet]",
-    "  analyze   [config] [--quiet]",
-    "  app       [config] [--port=N]",
-    "  plan      [config] [--bulk] [--quiet]",
-    "  move      [config] [--execute]",
-    "  (--quiet suppresses phase banners and progress output)",
+    "  inventory [work_dir] [--parallel=N] [--quiet]",
+    "  analyze   [work_dir] [--quiet]",
+    "  app       [work_dir] [--port=N] [--no-browser]",
+    "  plan      [work_dir] [--bulk] [--quiet]",
+    "  move      [work_dir] [--execute]",
+    "",
+    "  With no work_dir: $DUNDEE_WORK, else ./config.yml, else ./work.",
+    "  --quiet suppresses phase banners and progress output.",
     sep = "\n"
   )
   if (!length(args) || args[[1]] %in% c("help", "-h", "--help")) {
@@ -336,27 +342,47 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
     return(invisible(NULL))
   }
 
-  cmd <- args[[1]]
+  cmd  <- args[[1]]
   rest <- args[-1]
   flags <- grepl("^--", rest)
-  cfg_path <- if (any(!flags)) rest[!flags][[1]] else NULL
-  quiet <- "--quiet" %in% rest
+  work <- if (any(!flags)) rest[!flags][[1]] else NULL
+
+  # Reject typos rather than silently dropping them.
+  allowed <- c("--quiet", "--bulk", "--execute", "--edit", "--no-edit",
+               "--no-browser", "--parallel", "--port", "--library", "--rebase")
+  given <- sub("=.*$", "", rest[flags])
+  unknown <- setdiff(given, allowed)
+  if (length(unknown)) {
+    stop("dundee: unknown option(s): ", paste(unknown, collapse = ", "),
+         "\n", usage, call. = FALSE)
+  }
+
+  has <- function(f) f %in% rest
   opt <- function(name, default = NULL) {
     hit <- grep(paste0("^--", name, "="), rest, value = TRUE)
     if (length(hit)) sub(paste0("^--", name, "="), "", hit[[1]]) else default
   }
+  quiet <- has("--quiet")
 
   out <- switch(
     cmd,
+    init = {
+      if (is.null(work)) {
+        stop("dundee: init needs a work directory.\n", usage, call. = FALSE)
+      }
+      dd_init(work, library_root = opt("library"), edit = !has("--no-edit"))
+    },
+    config = if (has("--edit")) dd_edit_config(work %||% dd_work_dir())
+             else dd_config_report(dd_config(work)),
+    status    = dd_status(work),
     preflight = dd_preflight(quiet = quiet),
-    inventory = dd_run_inventory(cfg_path,
-                                 parallel = opt("parallel"), quiet = quiet),
-    analyze   = dd_run_analyze(cfg_path, quiet = quiet),
-    app       = dd_app(cfg_path,
-                       port = as.integer(opt("port", 7654L)),
-                       launch_browser = TRUE),
-    plan      = dd_run_plan(cfg_path, bulk = "--bulk" %in% rest, quiet = quiet),
-    move      = dd_run_move(cfg_path, execute = "--execute" %in% rest),
+    inventory = dd_run_inventory(work, parallel = opt("parallel"),
+                                 quiet = quiet),
+    analyze   = dd_run_analyze(work, quiet = quiet),
+    app       = dd_app(work, port = as.integer(opt("port", 7654L)),
+                       launch_browser = !has("--no-browser")),
+    plan      = dd_run_plan(work, bulk = has("--bulk"), quiet = quiet),
+    move      = dd_run_move(work, execute = has("--execute")),
     stop("dundee: unknown command '", cmd, "'.\n", usage, call. = FALSE)
   )
   invisible(out)

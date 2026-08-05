@@ -19,13 +19,10 @@ dd_default_extensions <- c(
 
 dd_config_defaults <- function() {
   list(
-    # Read-only SMB mount root of the photo library on the Mac. This and
-    # work_dir are the only two directories dundee expects a user to set.
+    # Read-only root of the photo library. The ONLY directory a user sets:
+    # the work directory is wherever config.yml lives (see R/project.R).
     library_root = NULL,
-    # Local working area: store, staging, temp scratch, caches, manifests.
-    # Everything dundee writes locally lives under here.
-    work_dir = "work",
-    # SQLite store filename (always resolved under work_dir; see dd_config()).
+    # SQLite store filename, always resolved under the work directory.
     db_path = "dundee.sqlite",
     # Number of parallel fingerprint workers.
     parallel = 4L,

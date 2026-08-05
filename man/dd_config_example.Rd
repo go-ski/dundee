@@ -13,5 +13,5 @@ dd_config_example(path = "config.example.yml")
 \code{path}, invisibly.
 }
 \description{
-Kept for backward compatibility; \code{dd_init()} is the normal entry point.
+\code{dd_init()} is the normal entry point; this is for looking at the template.
 }

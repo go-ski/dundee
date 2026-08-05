@@ -13,5 +13,6 @@ dd_status(config = NULL)
 A one-row data frame of counts, invisibly.
 }
 \description{
-Report the state of a dundee work directory.
+Read-only: it never applies the config guard, so it still works when the
+config and the store have drifted apart.
 }

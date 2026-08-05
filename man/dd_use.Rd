@@ -2,7 +2,7 @@
 % Please edit documentation in R/project.R
 \name{dd_use}
 \alias{dd_use}
-\title{Set (or query) the work directory for this R session.}
+\title{Set the work directory for this R session.}
 \usage{
 dd_use(work_dir)
 }

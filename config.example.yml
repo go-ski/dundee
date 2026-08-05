@@ -1,65 +1,85 @@
-library_root: /Volumes/photo
-work_dir: work
+# dundee configuration for one read-only photo library.
+#
+# This file lives INSIDE the work directory it controls. Everything dundee
+# writes for this library -- the SQLite store, staging shards, thumbnails,
+# scratch space, manifests -- sits beside it. To work on a second library,
+# make a second work directory with its own config.yml (dd_init()).
+#
+# There is no `work_dir:` key: the work directory is the directory this file
+# is in. There is no `temp_dir:` key: scratch is always ./tmp.
+
+# --- the one path you must set ---------------------------------------------
+
+# Read-only root of the library. Never written to.
+# macOS SMB mount, read-only:
+#   mkdir -p "$HOME/photo-ro"
+#   mount_smbfs -o rdonly //user@nas.local/photo "$HOME/photo-ro"
+library_root: ~/photo-ro
+
+# --- store -----------------------------------------------------------------
+
+# Filename only; always created next to this file.
 db_path: dundee.sqlite
+
+# --- inventory -------------------------------------------------------------
+
+# Concurrent fingerprint workers. Over SMB the network, not the CPU, is
+# usually the limit; 4-8 is typical, higher can thrash the mount.
 parallel: 4
-extensions:
-- jpg
-- jpeg
-- jpe
-- png
-- gif
-- bmp
-- tif
-- tiff
-- webp
-- heic
-- heif
-- avif
-- cr2
-- cr3
-- nef
-- nrw
-- arw
-- sr2
-- srf
-- raf
-- rw2
-- orf
-- dng
-- pef
-- raw
-- x3f
-- 3fr
-- erf
-- kdc
-- mef
-- mos
-- iiq
-cruft:
-- '@eaDir'
-- '#recycle'
-- '#snapshot'
-- '@tmp'
-- .@__thumb
-- '@sharebin'
-- .DS_Store
-- Thumbs.db
-- .Spotlight-V100
-- .TemporaryItems
-- .Trashes
-- .fseventsd
+
+# Extensions to inventory (lowercase, no dot). Trim this to speed up
+# enumeration if your library has no RAW files.
+extensions: [jpg, jpeg, jpe, png, gif, bmp, tif, tiff, webp,
+             heic, heif, avif,
+             cr2, cr3, nef, nrw, arw, sr2, srf, raf, rw2, orf,
+             dng, pef, raw, x3f, 3fr, erf, kdc, mef, mos, iiq]
+
+# Directory and file names pruned during enumeration (Synology + macOS junk).
+cruft: ['@eaDir', '#recycle', '#snapshot', '@tmp', .@__thumb, '@sharebin',
+        .DS_Store, Thumbs.db, .Spotlight-V100, .TemporaryItems,
+        .Trashes, .fseventsd]
+
+# --- near-duplicate tuning -------------------------------------------------
+
+# dHash geometry: an N x N grid gives N^2 bits. FIXED ONCE INVENTORY HAS RUN --
+# fingerprints of different geometries cannot be compared, so changing this
+# means re-fingerprinting the whole library in a fresh work directory.
 fingerprint_grid: 8
+
+# Maximum Hamming distance (inclusive) for two photos to be called near
+# duplicates. 0-3 = very tight (re-saves, crops of a few pixels); 5 = default;
+# 10+ starts merging different frames of the same scene. Safe to change and
+# re-run analyze: grouping is recomputed from stored fingerprints.
 hamming_threshold: 5
+
+# LSH bands used to block candidate pairs. Must divide fingerprint_grid^2.
+# More bands = more candidates examined = higher recall, slower analyze.
+# For b bands over 64 bits, a pair at distance d collides with probability
+# 1 - (1 - (1 - d/64)^(64/b))^b; b = 8 gives ~0.997 at d = 5.
 lsh_bands: 8
-preference_rules:
-- max_pixels
-- max_filesize
-- max_meta
-- oldest_capture
+
+# --- choosing the preferred copy -------------------------------------------
+
+# Applied in order as tie-breakers by the bulk heuristic (and shown in the
+# review app). One of: max_pixels, max_filesize, max_meta, oldest_capture,
+# folder_priority.
+preference_rules: [max_pixels, max_filesize, max_meta, oldest_capture]
+
+# Folders (relative to library_root), most-preferred first. Only consulted
+# when folder_priority appears in preference_rules above.
 folder_priority: []
-ssh_host: synology.local
+
+# --- phase 3: server-side moves --------------------------------------------
+# Only needed for `plan` and `move`. Inventory and analyze ignore these.
+
 ssh_user: admin
+ssh_host: nas.local
+
+# The server-side path that library_root is mounted from, e.g. the Mac sees
+# ~/photo-ro where the NAS sees /volume1/photo.
 nas_root: /volume1/photo
+
+# Server-side destination trees. Relative paths from library_root are
+# preserved under each. dundee only ever moves; it never deletes.
 preferred_root: /volume1/photo/_dedup/preferred
 nonpreferred_root: /volume1/photo/_dedup/non-preferred
-

@@ -7,7 +7,7 @@
 dd_config(config = NULL, require_library = FALSE, create = TRUE)
 }
 \arguments{
-\item{config}{A work directory, a YAML path, a config list, or NULL to use
+\item{config}{A work directory, a YAML path, a config list, or \code{NULL} to use
 the active work directory (see \code{\link[=dd_work_dir]{dd_work_dir()}}).}
 
 \item{require_library}{Require \code{library_root} to be set and to exist.}

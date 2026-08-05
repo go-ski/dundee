@@ -13,7 +13,6 @@ dd_work_dir(work_dir = NULL)
 A resolved directory path.
 }
 \description{
-Resolution order: explicit argument, \code{options(dundee.work_dir)}, the
-\code{DUNDEE_WORK} environment variable, \code{./config.yml} (legacy layout),
-\code{./work/config.yml}.
+Resolution order: explicit argument, \code{options(dundee.work_dir)},
+\verb{$DUNDEE_WORK}, \verb{$DUNDEE_CONFIG}, \code{./config.yml}, \code{./work/config.yml}.
 }

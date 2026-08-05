@@ -7,7 +7,7 @@
 dd_app(config = NULL, port = 7654L, launch_browser = interactive())
 }
 \arguments{
-\item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}
+\item{config}{A work directory, a config path, or a list from \code{\link[=dd_config]{dd_config()}}.}
 
 \item{port}{Port to serve on.}
 

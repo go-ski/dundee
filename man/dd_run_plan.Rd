@@ -7,7 +7,7 @@
 dd_run_plan(config = NULL, bulk = FALSE, quiet = FALSE)
 }
 \arguments{
-\item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}
+\item{config}{A work directory, a config path, or a list from \code{\link[=dd_config]{dd_config()}}.}
 
 \item{bulk}{Logical; apply \code{\link[=dd_apply_bulk_decisions]{dd_apply_bulk_decisions()}} before planning.}
 

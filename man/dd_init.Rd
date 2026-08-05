@@ -18,18 +18,18 @@ library lives here.}
 
 \item{library_root}{Read-only root of the photo library.}
 
-\item{...}{Further config fields to pre-fill, e.g. \code{ssh_host = "nas.local"}.}
+\item{...}{Further scalar config fields, e.g. \code{ssh_host = "nas.local"}.}
 
 \item{edit}{Open the new config in an editor before validating.}
 
-\item{overwrite}{Replace an existing \code{config.yml} (the old one is archived
-to \verb{config.history/} either way).}
+\item{overwrite}{Replace an existing \code{config.yml} (the previous version is
+archived to \verb{config.history/} either way).}
 }
 \value{
 The validated config list, invisibly.
 }
 \description{
 Copies the annotated template to \verb{<work_dir>/config.yml}, fills in the
-fields supplied here, opens it in an editor, then validates it. Nothing is
-ever written outside \code{work_dir}, and the library is never touched.
+fields supplied here, optionally opens it in an editor, then validates it.
+Nothing is written outside \code{work_dir}; the library is never touched.
 }

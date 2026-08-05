@@ -58,3 +58,11 @@ work/
 .quarto
 
 /.quarto/
+
+# dundee work directories (config.yml inside one is yours to keep or ignore)
+config.resolved.yml
+config.history/
+enum.tsv
+todo.nul
+moves.tsv
+moves.sh

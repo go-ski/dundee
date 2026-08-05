@@ -17,6 +17,6 @@ Backs the \code{run.sh} wrapper. Not normally called interactively.
 }
 \examples{
 \dontrun{
-dd_cli(c("analyze", "config.yml"))
+dd_cli(c("analyze", "~/dundee/family-photos"))
 }
 }

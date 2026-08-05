@@ -12,11 +12,11 @@ dd_edit_config(work_dir = dd_work_dir(), editor = NULL)
 \item{editor}{Editor command; defaults to \verb{$VISUAL}, \verb{$EDITOR}, then \code{vi}.}
 }
 \value{
-The validated config list, invisibly.
+The validated config list, or \code{NULL} if the edit was invalid.
 }
 \description{
 Archives the current file, opens \verb{$VISUAL}/\verb{$EDITOR} (or \code{utils::file.edit()}
-inside RStudio/Positron), then reloads. If the edited file fails validation
-the error is reported and the archived copy is offered for restore, so a bad
-edit can never leave the project unusable.
+in RStudio/Positron), then reloads. If the edited file fails validation the
+error is reported and the archived copy is named for restore, so a bad edit
+can never leave the project unusable.
 }
