@@ -4,13 +4,7 @@
 \alias{dd_init}
 \title{Initialise a dundee work directory for one read-only photo library.}
 \usage{
-dd_init(
-  work_dir,
-  library_root = NULL,
-  ...,
-  edit = interactive(),
-  overwrite = FALSE
-)
+dd_init(work_dir, library_root = NULL, ..., overwrite = FALSE)
 }
 \arguments{
 \item{work_dir}{Directory to create/use. Everything dundee writes for this
@@ -20,8 +14,6 @@ library lives here.}
 
 \item{...}{Further scalar config fields, e.g. \code{ssh_host = "nas.local"}.}
 
-\item{edit}{Open the new config in an editor before validating.}
-
 \item{overwrite}{Replace an existing \code{config.yml} (the previous version is
 archived to \verb{config.history/} either way).}
 }
@@ -29,7 +21,8 @@ archived to \verb{config.history/} either way).}
 The validated config list, invisibly.
 }
 \description{
-Copies the annotated template to \verb{<work_dir>/config.yml}, fills in the
-fields supplied here, optionally opens it in an editor, then validates it.
-Nothing is written outside \code{work_dir}; the library is never touched.
+Copies the annotated template to \verb{<work_dir>/config.yml} and fills in the
+fields supplied here. Nothing is written outside \code{work_dir}; the library is
+never touched. Edit \verb{<work_dir>/config.yml} directly (with any text editor)
+to change settings, then call \code{\link[=dd_config]{dd_config()}} to re-validate.
 }

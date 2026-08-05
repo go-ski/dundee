@@ -155,7 +155,7 @@ test_that("dd_init writes a template that loads cleanly", {
           "config template not reachable in this run mode")
   root <- tempfile("lib-"); dir.create(root)
   wd <- tempfile("work-")
-  cfg <- dd_init(wd, library_root = root, edit = FALSE)
+  cfg <- dd_init(wd, library_root = root)
   expect_true(file.exists(file.path(wd, "config.yml")))
   expect_equal(cfg$library_root, dd_resolve_path(root))
   expect_false(any(grepl("^work_dir:", readLines(file.path(wd, "config.yml")))))
@@ -165,11 +165,11 @@ test_that("dd_init writes a template that loads cleanly", {
   f <- file.path(wd, "config.yml")
   writeLines(sub("^hamming_threshold:.*$", "hamming_threshold: 2",
                  readLines(f)), f)
-  expect_message(cfg2 <- dd_init(wd, edit = FALSE), "already exists")
+  expect_message(cfg2 <- dd_init(wd), "already exists")
   expect_equal(cfg2$hamming_threshold, 2L)
 
   # overwrite = TRUE resets the file but archives what was there
-  cfg3 <- dd_init(wd, library_root = root, edit = FALSE, overwrite = TRUE)
+  cfg3 <- dd_init(wd, library_root = root, overwrite = TRUE)
   expect_equal(cfg3$hamming_threshold, 5L)
   expect_true(length(list.files(file.path(wd, "config.history"))) >= 1L)
 })

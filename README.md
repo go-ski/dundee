@@ -154,8 +154,8 @@ stay in a shell than an R session:
 ```sh
 ./run.sh preflight                   # verify external tools and R packages
 
-./run.sh init   ~/dundee/family-photos --library=~/photo-ro [--no-edit]
-./run.sh config ~/dundee/family-photos [--edit]
+./run.sh init   ~/dundee/family-photos --library=~/photo-ro
+./run.sh config ~/dundee/family-photos
 ./run.sh status ~/dundee/family-photos
 
 # Phase 1 — inventory (enumerate -> resume-filter -> fingerprint -> merge)

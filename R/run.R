@@ -322,9 +322,9 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
   usage <- paste(
     "usage: run.sh <command> [work_dir] [options]",
     "",
-    "  init      <work_dir> --library=DIR [--no-edit]",
+    "  init      <work_dir> --library=DIR",
     "                                 create a work directory + config.yml",
-    "  config    [work_dir] [--edit]  show (or edit) the config",
+    "  config    [work_dir]           show the config",
     "  status    [work_dir]           what is done, and what is next",
     "  preflight                      check external tools and R packages",
     "  inventory [work_dir] [--parallel=N] [--quiet]",
@@ -348,7 +348,7 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
   work <- if (any(!flags)) rest[!flags][[1]] else NULL
 
   # Reject typos rather than silently dropping them.
-  allowed <- c("--quiet", "--bulk", "--execute", "--edit", "--no-edit",
+  allowed <- c("--quiet", "--bulk", "--execute",
                "--no-browser", "--parallel", "--port", "--library", "--rebase")
   given <- sub("=.*$", "", rest[flags])
   unknown <- setdiff(given, allowed)
@@ -370,10 +370,9 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
       if (is.null(work)) {
         stop("dundee: init needs a work directory.\n", usage, call. = FALSE)
       }
-      dd_init(work, library_root = opt("library"), edit = !has("--no-edit"))
+      dd_init(work, library_root = opt("library"))
     },
-    config = if (has("--edit")) dd_edit_config(work %||% dd_work_dir())
-             else dd_config_report(dd_config(work)),
+    config    = dd_config_report(dd_config(work)),
     status    = dd_status(work),
     preflight = dd_preflight(quiet = quiet),
     inventory = dd_run_inventory(work, parallel = opt("parallel"),

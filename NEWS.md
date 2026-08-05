@@ -8,10 +8,10 @@
   the SQLite store, `tmp/`, `staging/`, `thumbs/`, the manifests, and the
   generated move script.
 
-* New `dd_init()` creates a work directory from an annotated template, fills in
-  the fields passed to it, opens an editor, and validates the result.
-  `dd_edit_config()` re-opens it later, archiving the previous version to
-  `config.history/` and reporting (rather than applying) an invalid edit.
+* New `dd_init()` creates a work directory from an annotated template and
+  fills in the fields passed to it. Edit `config.yml` directly with any text
+  editor to change settings afterward; [dd_config()] re-validates it on the
+  next call and reports all problems at once if the edit is invalid.
 
 * New `dd_use()` sets a session default, so every stage can then be called with
   no arguments: `dd_use("~/dundee/family-photos"); dd_run_inventory()`.
@@ -63,7 +63,8 @@
 
 * `run.sh` gains `init`, `config`, and `status`; the positional argument is a
   work directory; `--no-browser` is available for `app`; and unknown options
-  are rejected rather than silently ignored.
+  are rejected rather than silently ignored. `config.yml` is always edited
+  directly (with any text editor) rather than through the CLI or R API.
 
 ## Earlier in this cycle
 

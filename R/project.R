@@ -131,21 +131,20 @@ dd_work_dir <- function(work_dir = NULL) {
 
 #' Initialise a dundee work directory for one read-only photo library.
 #'
-#' Copies the annotated template to `<work_dir>/config.yml`, fills in the
-#' fields supplied here, optionally opens it in an editor, then validates it.
-#' Nothing is written outside `work_dir`; the library is never touched.
+#' Copies the annotated template to `<work_dir>/config.yml` and fills in the
+#' fields supplied here. Nothing is written outside `work_dir`; the library is
+#' never touched. Edit `<work_dir>/config.yml` directly (with any text editor)
+#' to change settings, then call [dd_config()] to re-validate.
 #'
 #' @param work_dir Directory to create/use. Everything dundee writes for this
 #'   library lives here.
 #' @param library_root Read-only root of the photo library.
 #' @param ... Further scalar config fields, e.g. `ssh_host = "nas.local"`.
-#' @param edit Open the new config in an editor before validating.
 #' @param overwrite Replace an existing `config.yml` (the previous version is
 #'   archived to `config.history/` either way).
 #' @return The validated config list, invisibly.
 #' @export
-dd_init <- function(work_dir, library_root = NULL, ...,
-                    edit = interactive(), overwrite = FALSE) {
+dd_init <- function(work_dir, library_root = NULL, ..., overwrite = FALSE) {
   wd <- dd_resolve_path(work_dir)
   if (!is.null(library_root)) {
     lr <- dd_resolve_path(library_root)
@@ -164,7 +163,7 @@ dd_init <- function(work_dir, library_root = NULL, ...,
   if (file.exists(cfg_file) && !isTRUE(overwrite)) {
     message("dundee: ", cfg_file, " already exists; leaving it in place ",
             "(pass overwrite = TRUE to reset it).")
-    return(invisible(if (isTRUE(edit)) dd_edit_config(wd) else dd_config(wd)))
+    return(invisible(dd_config(wd)))
   }
   if (file.exists(cfg_file)) dd_archive_config(wd)
 
@@ -173,55 +172,10 @@ dd_init <- function(work_dir, library_root = NULL, ...,
   fills <- fills[!vapply(fills, is.null, logical(1))]
   for (k in names(fills)) tmpl <- dd_template_set(tmpl, k, fills[[k]])
   writeLines(tmpl, cfg_file)
-  message("dundee: wrote ", cfg_file)
+  message("dundee: wrote ", cfg_file,
+          "\n  edit it directly if you need to change settings, then re-run.")
 
-  invisible(if (isTRUE(edit)) dd_edit_config(wd) else dd_config(wd))
-}
-
-#' Edit and re-validate a work directory's config.
-#'
-#' Archives the current file, opens `$VISUAL`/`$EDITOR` (or `utils::file.edit()`
-#' in RStudio/Positron), then reloads. If the edited file fails validation the
-#' error is reported and the archived copy is named for restore, so a bad edit
-#' can never leave the project unusable.
-#'
-#' @param work_dir Work directory (default: the active one).
-#' @param editor Editor command; defaults to `$VISUAL`, `$EDITOR`, then `vi`.
-#' @return The validated config list, or `NULL` if the edit was invalid.
-#' @export
-dd_edit_config <- function(work_dir = dd_work_dir(), editor = NULL) {
-  wd <- dd_resolve_path(work_dir)
-  cfg_file <- file.path(wd, "config.yml")
-  if (!file.exists(cfg_file)) {
-    stop("dundee: no config.yml in ", wd, ". Run dd_init() first.",
-         call. = FALSE)
-  }
-  backup <- dd_archive_config(wd)
-
-  if (is.null(editor) && interactive() && nzchar(Sys.getenv("RSTUDIO", ""))) {
-    utils::file.edit(cfg_file)
-    readline("Press <Enter> when you have saved config.yml: ")
-  } else {
-    ed <- editor %||% na_if_empty(Sys.getenv("VISUAL")) %||%
-      na_if_empty(Sys.getenv("EDITOR")) %||% "vi"
-    status <- system2(ed, shQuote(cfg_file))
-    if (!identical(as.integer(status), 0L)) {
-      message("dundee: editor exited with status ", status)
-    }
-  }
-
-  cfg <- tryCatch(dd_config(wd), error = function(e) e)
-  if (inherits(cfg, "error")) {
-    message("dundee: the edited config is not valid:\n  ",
-            conditionMessage(cfg),
-            if (!is.null(backup))
-              paste0("\n  previous version kept at ", backup,
-                     "\n  restore with: file.copy(\"", backup, "\", \"",
-                     cfg_file, "\", overwrite = TRUE)"))
-    return(invisible(NULL))
-  }
-  dd_config_report(cfg)
-  invisible(cfg)
+  invisible(dd_config(wd))
 }
 
 # Timestamped copy of the live config; returns the archive path (or NULL).
