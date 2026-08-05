@@ -160,13 +160,18 @@ test_that("dd_init writes a template that loads cleanly", {
   expect_equal(cfg$library_root, dd_resolve_path(root))
   expect_false(any(grepl("^work_dir:", readLines(file.path(wd, "config.yml")))))
 
-  # second call leaves the edited file alone
-  writeLines(c(readLines(file.path(wd, "config.yml")), "hamming_threshold: 2"),
-             file.path(wd, "config.yml"))
+  # second call leaves the edited file alone (edit in place: appending a key
+  # that the template already defines is a YAML duplicate-key error)
+  f <- file.path(wd, "config.yml")
+  writeLines(sub("^hamming_threshold:.*$", "hamming_threshold: 2",
+                 readLines(f)), f)
   expect_message(cfg2 <- dd_init(wd, edit = FALSE), "already exists")
   expect_equal(cfg2$hamming_threshold, 2L)
-  expect_true(dir.exists(file.path(wd, "config.history")) ||
-                TRUE)   # archive only on overwrite
+
+  # overwrite = TRUE resets the file but archives what was there
+  cfg3 <- dd_init(wd, library_root = root, edit = FALSE, overwrite = TRUE)
+  expect_equal(cfg3$hamming_threshold, 5L)
+  expect_true(length(list.files(file.path(wd, "config.history"))) >= 1L)
 })
 
 test_that("the resolved snapshot round-trips without warnings", {

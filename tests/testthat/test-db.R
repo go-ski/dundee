@@ -1,5 +1,5 @@
 test_that("photo upsert inserts then updates idempotently", {
-  cfg <- dd_config(path = NULL)
+  cfg <- dd_config_defaults()
   cfg$db_path <- tempfile(fileext = ".sqlite")
   con <- dd_db_connect(cfg)
   on.exit(DBI::dbDisconnect(con))
@@ -22,7 +22,7 @@ test_that("photo upsert inserts then updates idempotently", {
 test_that("config rejects bands that do not divide the bit length", {
   expect_error(
     {
-      cfg <- dd_config(path = NULL)
+      cfg <- dd_config_defaults()
       cfg$fingerprint_grid <- 8L  # 64 bits
       cfg$lsh_bands <- 7L         # 64 %% 7 != 0
       # validation happens inside dd_config; emulate by re-validating:

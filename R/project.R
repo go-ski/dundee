@@ -371,6 +371,15 @@ dd_config <- function(config = NULL, require_library = FALSE, create = TRUE) {
 
   defaults <- dd_config_defaults()
   user <- yaml::read_yaml(src$file)
+  # An empty config.yml reads back as NULL, and a file containing a bare
+  # scalar reads back as a character vector; neither is a mapping.
+  if (!is.list(user)) {
+    if (!is.null(user) && length(user)) {
+      stop("config: ", src$file, " is not a YAML mapping (key: value).",
+           call. = FALSE)
+    }
+    user <- list()
+  }
   user <- user[!vapply(user, is.null, logical(1))]   # `key:` with no value
   dd_check_keys(user, defaults)
   cfg <- utils::modifyList(defaults,

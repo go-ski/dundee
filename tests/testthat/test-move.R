@@ -1,5 +1,5 @@
 test_that("path translation maps SMB root to NAS root", {
-  cfg <- dd_config(path = NULL)
+  cfg <- dd_config_defaults()
   cfg$library_root <- "/Volumes/photo"
   cfg$nas_root <- "/volume1/photo"
   expect_equal(dd_translate_path("/Volumes/photo/2020/a.jpg", cfg),
@@ -11,7 +11,7 @@ test_that("path translation maps SMB root to NAS root", {
 })
 
 test_that("translation rejects paths outside the library root", {
-  cfg <- dd_config(path = NULL)
+  cfg <- dd_config_defaults()
   cfg$library_root <- "/Volumes/photo"
   cfg$nas_root <- "/volume1/photo"
   expect_error(dd_translate_path("/elsewhere/a.jpg", cfg),
@@ -19,7 +19,7 @@ test_that("translation rejects paths outside the library root", {
 })
 
 test_that("dest mapping routes preferred and non-preferred correctly", {
-  cfg <- dd_config(path = NULL)
+  cfg <- dd_config_defaults()
   cfg$preferred_root <- "/v/pref"
   cfg$nonpreferred_root <- "/v/non"
   expect_equal(dd_map_dest("2020/a.jpg", TRUE, cfg), "/v/pref/2020/a.jpg")

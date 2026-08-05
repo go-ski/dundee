@@ -1,5 +1,5 @@
 test_that("choose_preferred follows the rule order", {
-  cfg <- dd_config(path = NULL)
+  cfg <- dd_config_defaults()
   cfg$preference_rules <- c("max_pixels", "max_filesize")
   g <- data.frame(
     photo_id = c(10L, 11L, 12L),
@@ -15,7 +15,7 @@ test_that("choose_preferred follows the rule order", {
 })
 
 test_that("oldest_capture prefers the earliest timestamp", {
-  cfg <- dd_config(path = NULL)
+  cfg <- dd_config_defaults()
   cfg$preference_rules <- c("oldest_capture")
   g <- data.frame(
     photo_id = c(1L, 2L),
@@ -27,7 +27,7 @@ test_that("oldest_capture prefers the earliest timestamp", {
 })
 
 test_that("ties fall back to lowest photo_id deterministically", {
-  cfg <- dd_config(path = NULL)
+  cfg <- dd_config_defaults()
   cfg$preference_rules <- character(0)
   g <- data.frame(
     photo_id = c(7L, 3L, 9L),

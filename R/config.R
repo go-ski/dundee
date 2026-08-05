@@ -17,6 +17,14 @@ dd_default_extensions <- c(
   "dng", "pef", "raw", "x3f", "3fr", "erf", "kdc", "mef", "mos", "iiq"
 )
 
+#' The built-in configuration defaults.
+#'
+#' A plain list of every user-settable field and its default, with no file
+#' read, no validation, and no derived paths. Useful for inspecting what is
+#' configurable, and for unit tests of functions that take a config.
+#'
+#' @return A named list.
+#' @export
 dd_config_defaults <- function() {
   list(
     # Read-only root of the photo library. The ONLY directory a user sets:
