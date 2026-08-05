@@ -18,6 +18,7 @@ test_that("an absolute db_path is reduced to its basename under work_dir", {
     "db_path: /elsewhere/custom.sqlite"
   ), yml)
 
+  expect_message(cfg <- dd_config(yml), "db_path.*filename under work_dir")
   expect_equal(cfg$db_path, file.path(cfg$work_dir, "custom.sqlite"))
 })
 

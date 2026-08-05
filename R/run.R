@@ -31,25 +31,18 @@ dd_sh <- function(name, args = character(), quiet = FALSE) {
 }
 
 # Accept either a path to a YAML config or an already-resolved config list.
-dd_as_config <- function(config = "config.yml", require_library = FALSE) {
+dd_as_config <- function(config = NULL, require_library = FALSE) {
   if (is.list(config)) return(config)
   dd_config(config, require_library = require_library)
 }
 
 # Open the store, ensure the schema, run `f(con)`, always disconnect.
-dd_with_con <- function(cfg, f) {
+dd_with_con <- function(cfg, f, rebase = FALSE) {
   con <- dd_db_connect(cfg)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
   dd_db_init(con)
+  dd_config_guard(con, cfg, rebase = rebase)   # <- store/config invariants
   f(con)
-}
-
-# Write a fully-resolved config to a temp file so a child context (e.g. Shiny,
-# which changes the working directory) sees absolute paths.
-dd_config_tempfile <- function(cfg) {
-  path <- tempfile("dundee-config-", fileext = ".yml")
-  writeLines(yaml::as.yaml(cfg), path)
-  path
 }
 
 # --- preflight --------------------------------------------------------------
@@ -121,10 +114,11 @@ dd_preflight <- function(quiet = FALSE) {
 #' dd_run_inventory("config.yml")
 #' }
 #' @export
-dd_run_inventory <- function(config = "config.yml", parallel = NULL,
+dd_run_inventory <- function(config = NULL, parallel = NULL,
                              quiet = FALSE) {
   cfg <- dd_as_config(config, require_library = TRUE)
   if (!is.null(parallel)) cfg$parallel <- as.integer(parallel)
+  dd_config_snapshot(cfg)                      # <- provenance
 
   dd_phase("inventory", quiet = quiet)
   dir.create(cfg$work_dir, recursive = TRUE, showWarnings = FALSE)
@@ -178,8 +172,9 @@ dd_run_inventory <- function(config = "config.yml", parallel = NULL,
 #' dd_run_analyze("config.yml")
 #' }
 #' @export
-dd_run_analyze <- function(config = "config.yml", quiet = FALSE) {
+dd_run_analyze <- function(config = NULL, quiet = FALSE) {
   cfg <- dd_as_config(config)
+  dd_config_snapshot(cfg)                      # <- provenance
   dd_phase("analyze", quiet = quiet)
   out <- dd_with_con(cfg, function(con) dd_analyze(con, cfg, quiet = quiet))
   ngroups <- if (nrow(out)) length(unique(out$group_id)) else 0L
@@ -202,7 +197,7 @@ dd_run_analyze <- function(config = "config.yml", quiet = FALSE) {
 #' dd_app("config.yml", port = 7654)
 #' }
 #' @export
-dd_app <- function(config = "config.yml", port = 7654L,
+dd_app <- function(config = NULL, port = 7654L,
                    launch_browser = interactive()) {
   if (!requireNamespace("shiny", quietly = TRUE) ||
       !requireNamespace("bslib", quietly = TRUE)) {
@@ -216,12 +211,13 @@ dd_app <- function(config = "config.yml", port = 7654L,
 
   dd_phase("app")
   cfg <- dd_as_config(config)
-  resolved <- dd_config_tempfile(cfg)
+  # The resolved snapshot lives in work_dir, so it survives the app session and
+  # is the same file the shell stages read. runApp() chdirs, hence absolute.
+  resolved <- dd_config_snapshot(cfg)
   old <- Sys.getenv("DUNDEE_CONFIG", unset = NA)
   Sys.setenv(DUNDEE_CONFIG = resolved)
   on.exit({
     if (is.na(old)) Sys.unsetenv("DUNDEE_CONFIG") else Sys.setenv(DUNDEE_CONFIG = old)
-    unlink(resolved)
   }, add = TRUE)
 
   message(sprintf("review app: http://127.0.0.1:%d", as.integer(port)))
@@ -246,9 +242,10 @@ dd_app <- function(config = "config.yml", port = 7654L,
 #' dd_run_plan("config.yml", bulk = TRUE)
 #' }
 #' @export
-dd_run_plan <- function(config = "config.yml", bulk = FALSE, quiet = FALSE) {
+dd_run_plan <- function(config = NULL, bulk = FALSE, quiet = FALSE) {
   cfg <- dd_as_config(config)
   dd_require_move_config(cfg)
+  dd_config_snapshot(cfg)                      # <- provenance
   dd_phase("plan", quiet = quiet)
   out <- dd_with_con(cfg, function(con) {
     if (isTRUE(bulk)) {
@@ -277,9 +274,10 @@ dd_run_plan <- function(config = "config.yml", bulk = FALSE, quiet = FALSE) {
 #' dd_run_move("config.yml", execute = TRUE)  # for real
 #' }
 #' @export
-dd_run_move <- function(config = "config.yml", execute = FALSE) {
+dd_run_move <- function(config = NULL, execute = FALSE) {
   cfg <- dd_as_config(config)
   dd_require_move_config(cfg)
+  dd_config_snapshot(cfg)                      # <- provenance
   dd_phase("move")
   script <- file.path(cfg$work_dir, "moves.sh")
   if (!file.exists(script)) {
@@ -322,7 +320,8 @@ dd_require_move_config <- function(cfg) {
 #' @export
 dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
   usage <- paste(
-    "usage: run.sh <command> [config.yml] [options]",
+    "usage: run.sh <command> [work_dir|config.yml] [options]",
+    "  (with no path, uses $DUNDEE_WORK, else ./config.yml)",
     "  preflight                      check external tools and R packages",
     "  inventory [config] [--parallel=N] [--quiet]",
     "  analyze   [config] [--quiet]",
@@ -340,7 +339,7 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
   cmd <- args[[1]]
   rest <- args[-1]
   flags <- grepl("^--", rest)
-  cfg_path <- if (any(!flags)) rest[!flags][[1]] else "config.yml"
+  cfg_path <- if (any(!flags)) rest[!flags][[1]] else NULL
   quiet <- "--quiet" %in% rest
   opt <- function(name, default = NULL) {
     hit <- grep(paste0("^--", name, "="), rest, value = TRUE)

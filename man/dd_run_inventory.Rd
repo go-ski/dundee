@@ -4,7 +4,7 @@
 \alias{dd_run_inventory}
 \title{Run the inventory phase.}
 \usage{
-dd_run_inventory(config = "config.yml", parallel = NULL, quiet = FALSE)
+dd_run_inventory(config = NULL, parallel = NULL, quiet = FALSE)
 }
 \arguments{
 \item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}

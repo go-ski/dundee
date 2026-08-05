@@ -4,7 +4,7 @@
 \alias{dd_app}
 \title{Launch the Shiny review app.}
 \usage{
-dd_app(config = "config.yml", port = 7654L, launch_browser = interactive())
+dd_app(config = NULL, port = 7654L, launch_browser = interactive())
 }
 \arguments{
 \item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}

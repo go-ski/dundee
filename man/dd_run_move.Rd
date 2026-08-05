@@ -4,7 +4,7 @@
 \alias{dd_run_move}
 \title{Execute the planned moves server-side over SSH.}
 \usage{
-dd_run_move(config = "config.yml", execute = FALSE)
+dd_run_move(config = NULL, execute = FALSE)
 }
 \arguments{
 \item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}

@@ -4,7 +4,7 @@
 \alias{dd_run_plan}
 \title{Plan the Phase 3 moves.}
 \usage{
-dd_run_plan(config = "config.yml", bulk = FALSE, quiet = FALSE)
+dd_run_plan(config = NULL, bulk = FALSE, quiet = FALSE)
 }
 \arguments{
 \item{config}{Path to a YAML config, or a config list from \code{\link[=dd_config]{dd_config()}}.}
