@@ -16,8 +16,8 @@ dd_phase_ordinal <- c(preflight = 0L, inventory = 1L, analyze = 2L,
 # Phase banner, e.g. "== Phase: inventory (1 of 3) =============".
 dd_phase <- function(label, quiet = FALSE) {
   if (isTRUE(quiet)) return(invisible(NULL))
-  ord <- dd_phase_ordinal[[label]]
-  head <- if (!is.null(ord) && ord >= 1L) {
+  ord <- unname(dd_phase_ordinal[label])
+  head <- if (!is.na(ord) && ord >= 1L) {
     sprintf("Phase: %s (%d of 3)", label, ord)
   } else {
     sprintf("Phase: %s", label)
