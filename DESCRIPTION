@@ -1,6 +1,6 @@
 Package: dundee
 Title: Deduplication of Photo Collections, Done
-Version: 0.0.0.9000
+Version: 0.0.1
 Authors@R:
     person("George", "Ostrouchov", role = c("aut", "cre"),
            email = "go@tennessee.edu")
