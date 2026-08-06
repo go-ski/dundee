@@ -189,9 +189,11 @@ Every stage is idempotent and re-runnable.
   mtime has changed, or that previously failed to decode — rows in the `errors`
   table are not in `photos`, so they are retried on every run in case the file
   has become readable.
-- `staging/` accumulates shards across runs and is re-merged in full each time,
-  so the "merged N photo row(s)" line counts staged rows, not new ones. It is
-  safe to delete `staging/` after a successful inventory.
+- `staging/` holds one shard per fingerprint worker. Shards are merged
+  oldest-run-first and removed as soon as they merge, so "merged N photo
+  row(s)" is the number of rows written by *this* run. If a merge is
+  interrupted, the unmerged shards are still there and the next run picks
+  them up.
 - Re-running **analyze** recomputes grouping from stored fingerprints; nothing
   is re-read from the library.
 - The generated **move** script guards every command with `[ -e source ]` and

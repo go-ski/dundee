@@ -4,7 +4,7 @@
 \alias{dd_import_staging}
 \title{Import all staging + error files from the staging dir into the store.}
 \usage{
-dd_import_staging(con, cfg, quiet = FALSE)
+dd_import_staging(con, cfg, quiet = FALSE, prune = TRUE)
 }
 \arguments{
 \item{con}{A DBIConnection.}
@@ -12,10 +12,18 @@ dd_import_staging(con, cfg, quiet = FALSE)
 \item{cfg}{A config list (uses \code{cfg$staging_dir}).}
 
 \item{quiet}{Logical; suppress the merge progress bar.}
+
+\item{prune}{Logical; delete each shard once it has merged successfully.}
 }
 \value{
 A list with counts \code{photos} and \code{errors}, invisibly.
 }
 \description{
-Import all staging + error files from the staging dir into the store.
+Shards are merged oldest-run-first, so a path that appears in more than one
+shard -- a file that changed between inventory runs -- ends up with its most
+recent row. Each shard is removed as soon as it has merged, so no later run
+can re-apply a stale row and the returned counts are rows merged \emph{this} run
+rather than every row ever staged. Pass \code{prune = FALSE} to keep the shards
+for debugging; an interrupted merge leaves exactly the not-yet-merged shards
+behind, and re-running is safe because the upsert is idempotent.
 }

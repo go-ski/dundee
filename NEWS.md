@@ -34,6 +34,13 @@
 
 ## Validation and provenance
 
+* Staging shards are now deleted once merged, and any that remain are merged
+  oldest-run-first. Previously `staging/` grew without bound and was
+  re-merged in `list.files()` order; because shard names carried a pid, that
+  order was neither chronological nor numeric, so a file that changed between
+  inventory runs could end up with the *earlier* run's row in the store.
+  `dd_import_staging(prune = FALSE)` keeps the old behaviour for debugging.
+
 * Unknown config keys now warn, with a nearest-match suggestion. A typo such as
   `hamming_thresold:` used to be accepted and ignored, so the run completed with
   the default value.

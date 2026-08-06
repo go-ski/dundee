@@ -19,7 +19,12 @@ total="${7:-0}"
 mkdir -p "$stagedir" "$tmpdir"
 
 export DD_TMP="$tmpdir"
-export DD_STAGE="$stagedir/shard"
+# A UTC run stamp in the shard name makes shards sort chronologically even
+# when mtimes are unreliable (restored backups, clock skew). Within one run a
+# path is fingerprinted at most once, so the per-worker pid suffix never needs
+# to be ordered.
+run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+export DD_STAGE="$stagedir/shard.$run_stamp"
 export DD_GRID="$grid"
 export DD_ROOT="${root%/}"
 
