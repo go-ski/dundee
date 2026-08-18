@@ -34,12 +34,12 @@
   `errors` table, so `dd_status()`'s "unreadable" count only ever grew.
 
 * `rebase = TRUE` is reachable at last, as `dd_run_inventory(rebase = TRUE)` and
-  `run.sh inventory --rebase`. It now also rewrites the stored paths, which the
+  `dundee inventory --rebase`. It now also rewrites the stored paths, which the
   guard never did — recording the new root alone left every absolute path
   pointing at the old mount.
 
 * `dd_run_move()` gained `quiet`, so `quiet = TRUE` / `--quiet` really does work
-  on every stage. `run.sh init` now requires `--library=DIR` instead of quietly
+  on every stage. `dundee init` now requires `--library=DIR` instead of quietly
   keeping the template's `~/photo-ro` placeholder. The review app uses the
   stored `photos.path` rather than rebuilding it from `library_root`.
 
@@ -50,6 +50,38 @@
   store access is RSQLite; only `tests/e2e.sh` uses the CLI). `ssh` and
   `vipsthumbnail` are reported as warnings rather than failures, since they are
   needed only by the move phase and the review app respectively.
+
+## The launcher ships, and less of dundee is shell
+
+* **The command-line launcher installs with the package.** `run.sh` was in
+  `.Rbuildignore`, so `dd_cli()` reached installed users without an entry point
+  and the CLI worked only from a source checkout. It now lives in `exec/dundee`,
+  the subdirectory R documents for exactly this and installs mode 755. Symlink
+  it onto your PATH with
+  `ln -s "$(Rscript -e 'cat(system.file("exec", "dundee", package = "dundee"))')" ~/bin/dundee`.
+
+* **Options are validated per command.** A single global allow-list accepted
+  `status --bulk --execute --port=9` and discarded it, and was how `--rebase`
+  came to sit in the list for a stage that never read it. Each command now
+  declares the options it takes, argument parsing is separated from dispatch,
+  and a test asserts the usage text and that table still agree.
+
+* **`dd_preflight()` is one report, not a shell script plus an R block.**
+  `inst/bin/00-preflight.sh` did nothing that needed a shell and is gone;
+  `Sys.which()` does the work. `bash` joins the required tools — it was always
+  needed, but a bash script cannot report its own interpreter missing.
+
+* **Phase 3 talks to the server from R.** `inst/bin/70-execute-moves.sh` is gone
+  too; `dd_run_move()` prints the dry run and streams `moves.sh` over `ssh`
+  itself, handing ssh the file so the UTF-8 bytes reach the server unconverted.
+
+* `tests/e2e.sh` installs the package into a throwaway library and points
+  `R_LIBS` at it, the way `R CMD check` does. It used to export `DUNDEE_SRC` to
+  say "test this tree" while the launcher preferred whatever was installed last.
+
+* First tests for `dd_cli()`, `dd_preflight()` and the move launcher. Together
+  with the two ported scripts, this moves the CLI, preflight and the phase-3
+  handoff inside the surface `R CMD check` can reach.
 
 ## Work directory as the project handle
 
@@ -70,7 +102,7 @@
   `$DUNDEE_WORK`, `$DUNDEE_CONFIG`, `./config.yml`, `./work/config.yml`.
 
 * New `dd_status()` reports photo, group, decision and move counts for a work
-  directory and names the next step. Also available as `run.sh status`.
+  directory and names the next step. Also available as `dundee status`.
 
 * `dd_config()` accepts a work directory, a YAML path, or a resolved list.
   A `work_dir:` key that disagrees with the file's own location is still

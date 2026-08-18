@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of inventory -> analyze -> plan on the fixture library.
-# Drives the package entry points (dd_run_*), not the individual stage scripts:
-# the R stages that used to live in inst/bin (25-resume.R, 30-merge.R,
-# 40-analyze.R, 60-plan-moves.R) are now functions and those files no longer
-# exist. Run from the repo root.
+# Drives the package entry points (dd_run_*) through exec/dundee rather than the
+# individual stage scripts. Run from the repo root.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 cd "$root"
-export DUNDEE_SRC="$root"
 
 TOP="$(mktemp -d)"
 FX="$TOP/lib"
 WORK="$TOP/work"          # sibling of the library, never nested inside it
+LIB="$TOP/lib-R"
 trap 'rm -rf "$TOP"' EXIT
+
+# Install to a throwaway library and run against that, the way R CMD check does.
+# exec/dundee prefers an installed dundee over the surrounding source tree, so
+# without this the run would silently exercise whatever was installed last.
+mkdir -p "$LIB"
+R CMD INSTALL --library="$LIB" "$root" >/dev/null
+export R_LIBS="$LIB"
 
 bash tests/fixtures/make-fixtures.sh "$FX"
 mkdir -p "$WORK"
@@ -31,10 +36,10 @@ ssh_user: tester
 ssh_host: nas.local
 YML
 
-./run.sh inventory "$WORK" --quiet
-./run.sh analyze   "$WORK" --quiet
-./run.sh plan      "$WORK" --bulk --quiet
-./run.sh status    "$WORK"
+./exec/dundee inventory "$WORK" --quiet
+./exec/dundee analyze   "$WORK" --quiet
+./exec/dundee plan      "$WORK" --bulk --quiet
+./exec/dundee status    "$WORK"
 
 # --- assertions ---
 db="$WORK/e2e.sqlite"
@@ -60,7 +65,7 @@ fi
 
 # The store must refuse a changed fingerprint geometry.
 sed -i.bak 's/^db_path:/fingerprint_grid: 16\ndb_path:/' "$WORK/config.yml"
-if ./run.sh analyze "$WORK" --quiet 2>/dev/null; then
+if ./exec/dundee analyze "$WORK" --quiet 2>/dev/null; then
   echo "FAIL: grid change was not rejected"; fail=1
 fi
 mv "$WORK/config.yml.bak" "$WORK/config.yml"

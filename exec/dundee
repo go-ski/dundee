@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Thin wrapper: all logic lives in the R package. Uses the installed dundee if
+# present, otherwise load_all()s the surrounding source tree.
+#
+# Installed to <library>/dundee/exec/dundee (R marks exec/ scripts mode 755).
+# Symlink it onto your PATH:
+#   ln -s "$(Rscript -e 'cat(system.file("exec", "dundee", package = "dundee"))')" ~/bin/dundee
+set -euo pipefail
+
+# Only a source checkout has a DESCRIPTION one level up; the installed copy sits
+# inside the library, where load_all() would be wrong. Leaving DUNDEE_SRC empty
+# there makes the R below fall through to library(dundee).
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(dirname "$here")"
+if [[ -f "$root/DESCRIPTION" ]]; then
+  export DUNDEE_SRC="$root"
+else
+  export DUNDEE_SRC=""
+fi
+
+exec Rscript -e '
+  src <- Sys.getenv("DUNDEE_SRC")
+  if (requireNamespace("dundee", quietly = TRUE)) {
+    library(dundee)
+  } else if (nzchar(src) && requireNamespace("pkgload", quietly = TRUE)) {
+    pkgload::load_all(src, quiet = TRUE)
+  } else {
+    stop("Install dundee (devtools::install()) or the pkgload package.")
+  }
+  dd_cli(commandArgs(trailingOnly = TRUE))
+' "$@"

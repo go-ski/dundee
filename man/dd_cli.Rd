@@ -13,7 +13,7 @@ dd_cli(args = commandArgs(trailingOnly = TRUE))
 Invisibly, the value of the dispatched stage.
 }
 \description{
-Backs the \code{run.sh} wrapper. Not normally called interactively.
+Backs the \code{exec/dundee} wrapper. Not normally called interactively.
 }
 \examples{
 \dontrun{

@@ -61,18 +61,26 @@ instead. Hashes are not comparable between the two, so don't change hashing
 tools partway through a library.
 
 R packages: `DBI`, `RSQLite`, `base64enc`, `yaml`; plus `shiny` and `bslib` for
-the review app, and `pkgload` if you want to run `run.sh` against an
+the review app, and `pkgload` if you want to run `exec/dundee` against an
 uninstalled source tree. Install the package once with `R CMD INSTALL .`, or run
-directly from the source tree (the scripts fall back to `pkgload::load_all()`).
+directly from the source tree (the launcher falls back to `pkgload::load_all()`).
+
+The shell launcher installs with the package, so once dundee is installed you
+can put it on your PATH and drop the `./` prefix used below:
+
+```sh
+ln -s "$(Rscript -e 'cat(system.file("exec", "dundee", package = "dundee"))')" ~/bin/dundee
+```
 
 `dd_preflight()` fails only on tools every run needs. `ssh` (Phase 3) and
 `vipsthumbnail` (the review app) are reported as warnings, so a machine that can
 run inventory and analyze reports `preflight: ready.`
 
-> `run.sh` prefers an **installed** dundee over the source tree it sits in. When
-> you are changing the package, either re-run `R CMD INSTALL .` or point
-> `R_LIBS` at a scratch library first, or you will be testing the last version
-> you installed. `Rscript dev-test.R` always uses the source tree.
+> `exec/dundee` prefers an **installed** dundee over the source tree it sits in.
+> When you are changing the package, either re-run `R CMD INSTALL .` or point
+> `R_LIBS` at a scratch library first, or you will be running the last version
+> you installed. `Rscript dev-test.R` always uses the source tree, and
+> `tests/e2e.sh` installs to a throwaway library of its own.
 
 ## If using for Synology Photos
 
@@ -101,9 +109,9 @@ dd_status()                        # what is done, and what is next
 or from a shell:
 
 ```sh
-./run.sh preflight
-./run.sh init ~/dundee/family-photos --library=~/photo-ro
-./run.sh status ~/dundee/family-photos
+./exec/dundee preflight
+./exec/dundee init ~/dundee/family-photos --library=~/photo-ro
+./exec/dundee status ~/dundee/family-photos
 ```
 
 `dd_status()` is safe to run at any point and always names the next step.
@@ -142,33 +150,35 @@ unless you want the store, `staging/`, `thumbs/` and `tmp/` created there.
 
 ### Usage From the terminal (shell)
 
-`run.sh` is a thin wrapper around the same package; use it when you'd rather
-stay in a shell than an R session:
+`exec/dundee` is a thin wrapper around the same package; use it when you'd
+rather stay in a shell than an R session. It is shown here as run from a source
+checkout; installed and symlinked (see Requirements) it is just `dundee`:
 
 ```sh
-./run.sh preflight                   # verify external tools and R packages
+./exec/dundee preflight                   # verify external tools and R packages
 
-./run.sh init   ~/dundee/family-photos --library=~/photo-ro
-./run.sh config ~/dundee/family-photos
-./run.sh status ~/dundee/family-photos
+./exec/dundee init   ~/dundee/family-photos --library=~/photo-ro
+./exec/dundee config ~/dundee/family-photos
+./exec/dundee status ~/dundee/family-photos
 
 # Phase 1 — inventory (enumerate -> resume-filter -> fingerprint -> merge)
-./run.sh inventory ~/dundee/family-photos [--parallel=N] [--rebase] [--quiet]
+./exec/dundee inventory ~/dundee/family-photos [--parallel=N] [--rebase] [--quiet]
 
 # Phase 2 — analyze, then review
-./run.sh analyze ~/dundee/family-photos [--quiet]
-./run.sh app     ~/dundee/family-photos [--port=N] [--no-browser]
+./exec/dundee analyze ~/dundee/family-photos [--quiet]
+./exec/dundee app     ~/dundee/family-photos [--port=N] [--no-browser]
 
 # Phase 3 — plan (dry run), review the script, then execute server-side
-./run.sh plan ~/dundee/family-photos --bulk   # writes moves.tsv + moves.sh
-./run.sh move ~/dundee/family-photos          # DRY RUN: prints what would run
-./run.sh move ~/dundee/family-photos --execute
+./exec/dundee plan ~/dundee/family-photos --bulk   # writes moves.tsv + moves.sh
+./exec/dundee move ~/dundee/family-photos          # DRY RUN: prints what would run
+./exec/dundee move ~/dundee/family-photos --execute
 ```
 
 The positional argument is a work directory. With none, dundee resolves, in
 order: `options(dundee.work_dir)` (set by `dd_use()`), `$DUNDEE_WORK`,
-`$DUNDEE_CONFIG`, `./config.yml`, `./work/config.yml`. Unknown options are
-rejected rather than silently ignored.
+`$DUNDEE_CONFIG`, `./config.yml`, `./work/config.yml`. Options are validated
+per command, so an option that is real but wrong for the command you typed
+(`status --bulk`) is rejected rather than silently ignored.
 
 Each stage prints a phase banner plus progress as it runs (a live count during
 fingerprinting, progress bars for merge/analyze/plan) whether run from R or the
@@ -299,12 +309,13 @@ seen.
 
 ```sh
 Rscript dev-test.R                   # unit tests (testthat), no install needed
-R CMD INSTALL .                      # e2e drives run.sh, which prefers installed
 bash tests/e2e.sh                    # full pipeline on a generated fixture set
 ```
 
-`tests/e2e.sh` asserts, among other things, that nothing under `library_root`
-was written to — so it also serves as the regression test for the read-only
+`tests/e2e.sh` installs the package into a throwaway library and runs against
+that, so it always tests the working tree rather than whatever you installed
+last. It asserts, among other things, that nothing under `library_root` was
+written to — so it also serves as the regression test for the read-only
 guarantee.
 
 > HEIC/HEIF: handled when libvips is built with libheif. Verify with

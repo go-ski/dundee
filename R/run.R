@@ -47,14 +47,66 @@ dd_with_con <- function(cfg, f, rebase = FALSE) {
 
 # --- preflight --------------------------------------------------------------
 
+# One report line: "ok  ", "warn" or "MISS", the name, then a note. MISS is the
+# only status that survives quiet -- a caller that suppressed the report still
+# needs to learn why the check failed.
+dd_pf_line <- function(status, name, note = "", quiet = FALSE) {
+  txt <- sprintf("%-4s %-14s %s", status, name, note)
+  if (identical(status, "MISS") || !quiet) message(txt)
+  invisible(NULL)
+}
+
+# Absent means dundee cannot run at all. `bash` is on the list because dd_sh()
+# invokes it directly; it used to be implicit, since the checker was itself a
+# bash script and could not report its own interpreter missing.
+dd_pf_required <- c(
+  bash       = "the shell stages run under bash",
+  vips       = "install libvips (brew install vips)",
+  vipsheader = "part of libvips",
+  exiftool   = "brew install exiftool",
+  od         = "coreutils / ships with macOS",
+  awk        = "",
+  find       = "",
+  xargs      = "",
+  base64     = ""
+)
+
+# Needed by one phase only. Worth saying, but a machine that can run inventory
+# and analyze must not be told it is missing requirements.
+dd_pf_optional <- c(
+  vipsthumbnail = "part of libvips; needed only by the review app",
+  ssh           = "needed only by phase 3 (move)"
+)
+
+# Report whether vips can decode HEIC/HEIF. Informational: a library with no
+# HEIC in it does not care. The shell version had to avoid piping into `grep -q`
+# (it SIGPIPEs vips under `pipefail`, giving a false negative); with no pipeline
+# involved that hazard simply does not exist here.
+dd_pf_heif <- function() {
+  run <- function(...) tryCatch(suppressWarnings(
+    system2("vips", c(...), stdout = TRUE, stderr = FALSE)),
+    error = function(e) character())
+  fields <- trimws(unlist(strsplit(run("--vips-config"), ",")))
+  hit <- grep("libheif:\\s*true", fields, value = TRUE, ignore.case = TRUE)
+  if (length(hit)) {
+    message("ok   HEIC/HEIF support present (", hit[[1]], ")")
+  } else if (any(grepl("heifload", run("-l"), ignore.case = TRUE))) {
+    message("ok   HEIC/HEIF loader present (heifload)")
+  } else {
+    message("warn HEIC/HEIF support not detected; ",
+            "'brew install vips libheif' if needed")
+  }
+}
+
 #' Check that external tools and R dependencies are available.
 #'
-#' Runs the shell preflight (libvips, exiftool, a hashing tool) and additionally
-#' verifies the R packages dundee needs at run time. Tools that only one phase
-#' needs -- `ssh` for the move phase, `vipsthumbnail` and shiny/bslib for the
-#' review app -- are reported as warnings and do not make the check fail.
+#' Verifies the command-line tools the shell stages need and the R packages
+#' dundee needs at run time, in one report. Tools that only one phase needs --
+#' `ssh` for the move phase, `vipsthumbnail` and shiny/bslib for the review app
+#' -- are reported as warnings and do not make the check fail.
 #'
-#' @param quiet Logical; suppress the per-tool report.
+#' @param quiet Logical; suppress the per-tool report. Missing requirements are
+#'   still reported.
 #' @return `TRUE` if everything needed is present, otherwise `FALSE`,
 #'   invisibly.
 #' @examples
@@ -66,9 +118,54 @@ dd_preflight <- function(quiet = FALSE) {
   ok <- TRUE
   dd_phase("preflight", quiet = quiet)
 
-  status <- system2("bash", shQuote(dd_script("00-preflight.sh")),
-                    stdout = if (quiet) FALSE else "")
-  if (!identical(as.integer(status), 0L)) ok <- FALSE
+  if (!quiet) message("== required tools ==")
+  for (tool in names(dd_pf_required)) {
+    where <- Sys.which(tool)
+    if (nzchar(where)) {
+      dd_pf_line("ok", tool, where, quiet = quiet)
+    } else {
+      dd_pf_line("MISS", tool, dd_pf_required[[tool]])
+      ok <- FALSE
+    }
+  }
+
+  if (!quiet) message("== phase-specific tools (optional) ==")
+  for (tool in names(dd_pf_optional)) {
+    where <- Sys.which(tool)
+    dd_pf_line(if (nzchar(where)) "ok" else "warn", tool,
+               if (nzchar(where)) where else dd_pf_optional[[tool]],
+               quiet = quiet)
+  }
+
+  # Mirrors lib.sh's dd_filehash(): b3sum when present, else shasum.
+  if (!quiet) message("== hashing tool (need one) ==")
+  hasher <- Filter(function(h) nzchar(Sys.which(h)), c("b3sum", "shasum"))
+  if (length(hasher)) {
+    dd_pf_line("ok", hasher[[1]],
+               paste0(Sys.which(hasher[[1]]),
+                      if (identical(hasher[[1]], "shasum")) " (fallback)"
+                      else ""),
+               quiet = quiet)
+  } else {
+    dd_pf_line("MISS", "b3sum/shasum", "need one of them")
+    ok <- FALSE
+  }
+
+  if (!quiet) {
+    # lib.sh picks stat flags by this same probe; report which branch it will
+    # take so a portability surprise is visible here rather than mid-inventory.
+    message("== stat flavor ==")
+    gnu <- tryCatch(
+      identical(as.integer(system2("stat", "--version", stdout = FALSE,
+                                   stderr = FALSE)), 0L),
+      warning = function(w) FALSE, error = function(e) FALSE)
+    message(if (gnu) "STAT=gnu" else "STAT=bsd (macOS default; using stat -f)")
+
+    if (nzchar(Sys.which("vips"))) {
+      message("== vips format support ==")
+      dd_pf_heif()
+    }
+  }
 
   required <- c("DBI", "RSQLite", "base64enc", "yaml")
   suggested <- c("shiny", "bslib")
@@ -77,18 +174,16 @@ dd_preflight <- function(quiet = FALSE) {
   if (!quiet) message("== R packages ==")
   for (p in required) {
     if (have(p)) {
-      if (!quiet) message(sprintf("ok   %-14s", p))
+      dd_pf_line("ok", p, quiet = quiet)
     } else {
-      message(sprintf("MISS %-14s install.packages('%s')", p, p))
+      dd_pf_line("MISS", p, sprintf("install.packages('%s')", p))
       ok <- FALSE
     }
   }
   for (p in suggested) {
-    if (have(p)) {
-      if (!quiet) message(sprintf("ok   %-14s", p))
-    } else if (!quiet) {
-      message(sprintf("warn %-14s needed only for the review app", p))
-    }
+    dd_pf_line(if (have(p)) "ok" else "warn", p,
+               if (have(p)) "" else "needed only for the review app",
+               quiet = quiet)
   }
 
   if (!quiet) {
@@ -264,6 +359,38 @@ dd_run_plan <- function(config = NULL, bulk = FALSE, quiet = FALSE) {
   invisible(out)
 }
 
+# Stream the generated move script to the server. `stdin = script` hands ssh the
+# file itself, so the UTF-8 bytes dd_plan_moves() wrote with useBytes = TRUE
+# arrive verbatim; reading the script into R and piping it would re-encode to
+# native and mangle non-ASCII filenames under a C locale.
+dd_ssh_moves <- function(script, target) {
+  status <- system2("ssh", c(shQuote(target), shQuote("bash -s")),
+                    stdin = script)
+  if (!identical(as.integer(status), 0L)) {
+    stop(sprintf("dundee: ssh %s exited with status %s", target, status),
+         call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# Dry run: describe what --execute would stream, and show the head of it.
+# encoding= only marks the strings (the file is UTF-8 whatever the locale) and
+# useBytes= writes those bytes back out unconverted, so the preview shows real
+# filenames rather than escapes under LC_ALL=C.
+dd_move_preview <- function(script, target, quiet = FALSE) {
+  lines <- readLines(script, warn = FALSE, encoding = "UTF-8")
+  n <- sum(grepl("^if ", lines))
+  message(sprintf("DRY RUN. Would stream %d move command(s) to: ssh %s bash -s",
+                  n, target))
+  message("Pass execute = TRUE (--execute) to perform the moves.")
+  if (!quiet) {
+    writeLines(sprintf("---- %s ----", script), useBytes = TRUE)
+    writeLines(utils::head(lines, 20L), useBytes = TRUE)
+    if (length(lines) > 20L) writeLines("...")
+  }
+  invisible(n)
+}
+
 #' Execute the planned moves server-side over SSH.
 #'
 #' Dry run by default: prints what would be streamed to the server. Pass
@@ -291,21 +418,23 @@ dd_run_move <- function(config = NULL, execute = FALSE, quiet = FALSE) {
          ". Run dd_run_plan() first.", call. = FALSE)
   }
   target <- paste0(cfg$ssh_user, "@", cfg$ssh_host)
-  dd_sh("70-execute-moves.sh",
-        c(script, target, if (isTRUE(execute)) "--execute" else ""),
-        quiet = quiet)
+  if (!isTRUE(execute)) {
+    dd_move_preview(script, target, quiet = quiet)
+    return(invisible(TRUE))
+  }
+  message("executing moves server-side on ", target, " ...")
+  dd_ssh_moves(script, target)
+  message("server-side moves complete.")
 
   # The script runs under `set -euo pipefail`, so reaching here means every
   # command in it succeeded; mark the batch done. Without this dd_status()
   # reports "0 done" forever and keeps recommending the move that just ran.
-  if (isTRUE(execute)) {
-    n <- dd_with_con(cfg, function(con) {
-      DBI::dbExecute(con, "UPDATE moves SET state = 'done', moved_at = ?
-                            WHERE state = 'planned'",
-                     params = list(format(Sys.time(), "%Y-%m-%dT%H:%M:%S")))
-    })
-    message(sprintf("move: marked %d move(s) done", n))
-  }
+  n <- dd_with_con(cfg, function(con) {
+    DBI::dbExecute(con, "UPDATE moves SET state = 'done', moved_at = ?
+                          WHERE state = 'planned'",
+                   params = list(format(Sys.time(), "%Y-%m-%dT%H:%M:%S")))
+  })
+  message(sprintf("move: marked %d move(s) done", n))
   invisible(TRUE)
 }
 
@@ -326,26 +455,33 @@ dd_require_move_config <- function(cfg) {
 
 # --- command line dispatch --------------------------------------------------
 
-#' Dispatch a dundee command from the command line.
-#'
-#' Backs the `run.sh` wrapper. Not normally called interactively.
-#'
-#' @param args Character vector of arguments, e.g. `commandArgs(TRUE)`.
-#' @return Invisibly, the value of the dispatched stage.
-#' @examples
-#' \dontrun{
-#' dd_cli(c("analyze", "~/dundee/family-photos"))
-#' }
-#' @export
-dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
-  usage <- paste(
-    "usage: run.sh <command> [work_dir] [options]",
+# Options each command accepts. A single global list of allowed flags let
+# `status --bulk --execute` validate cleanly, and let `--rebase` sit in the list
+# for a stage that never read it. Keying by command makes "unknown options are
+# rejected" true per command, and gives the usage text something to be checked
+# against (see tests/testthat/test-cli.R).
+dd_cli_opts <- list(
+  init      = "--library",
+  config    = character(),
+  status    = character(),
+  preflight = "--quiet",
+  inventory = c("--parallel", "--rebase", "--quiet"),
+  analyze   = "--quiet",
+  app       = c("--port", "--no-browser"),
+  plan      = c("--bulk", "--quiet"),
+  move      = c("--execute", "--quiet")
+)
+
+# The command lines below are parsed by the drift test, which requires that the
+# flags shown for a command are exactly the flags dd_cli_opts allows it.
+dd_cli_usage <- function() {
+  paste(
+    "usage: dundee <command> [work_dir] [options]",
     "",
-    "  init      <work_dir> --library=DIR",
-    "                                 create a work directory + config.yml",
-    "  config    [work_dir]           show the config",
-    "  status    [work_dir]           what is done, and what is next",
-    "  preflight                      check external tools and R packages",
+    "  init      <work_dir> --library=DIR   create a work directory + config.yml",
+    "  config    [work_dir]                 show the config",
+    "  status    [work_dir]                 what is done, and what is next",
+    "  preflight [--quiet]                  check external tools and R packages",
     "  inventory [work_dir] [--parallel=N] [--rebase] [--quiet]",
     "  analyze   [work_dir] [--quiet]",
     "  app       [work_dir] [--port=N] [--no-browser]",
@@ -359,58 +495,92 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
     "  every stored path); see 'this store was built against library_root'.",
     sep = "\n"
   )
+}
+
+# Split arguments into command, work directory and options, validating both.
+# Kept free of dispatch so the parsing -- the part that has drifted -- can be
+# tested without running a stage.
+dd_parse_args <- function(args) {
+  usage <- dd_cli_usage()
   if (!length(args) || args[[1]] %in% c("help", "-h", "--help")) {
-    cat(usage, "\n", sep = "")
+    return(list(cmd = "help", work = NULL, flags = character(), usage = usage))
+  }
+
+  cmd <- args[[1]]
+  rest <- args[-1]
+  if (!cmd %in% names(dd_cli_opts)) {
+    stop("dundee: unknown command '", cmd, "'.\n", usage, call. = FALSE)
+  }
+
+  is_flag <- grepl("^--", rest)
+  unknown <- setdiff(sub("=.*$", "", rest[is_flag]), dd_cli_opts[[cmd]])
+  if (length(unknown)) {
+    stop("dundee: ", cmd, " does not accept option(s): ",
+         paste(unknown, collapse = ", "), "\n", usage, call. = FALSE)
+  }
+
+  list(cmd = cmd,
+       work = if (any(!is_flag)) rest[!is_flag][[1]] else NULL,
+       flags = rest[is_flag],
+       usage = usage)
+}
+
+dd_has_flag <- function(flags, name) paste0("--", name) %in% flags
+
+dd_flag_value <- function(flags, name, default = NULL) {
+  hit <- grep(paste0("^--", name, "="), flags, value = TRUE)
+  if (length(hit)) sub(paste0("^--", name, "="), "", hit[[1]]) else default
+}
+
+#' Dispatch a dundee command from the command line.
+#'
+#' Backs the `exec/dundee` wrapper. Not normally called interactively.
+#'
+#' @param args Character vector of arguments, e.g. `commandArgs(TRUE)`.
+#' @return Invisibly, the value of the dispatched stage.
+#' @examples
+#' \dontrun{
+#' dd_cli(c("analyze", "~/dundee/family-photos"))
+#' }
+#' @export
+dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
+  p <- dd_parse_args(args)
+  if (identical(p$cmd, "help")) {
+    cat(p$usage, "\n", sep = "")
     return(invisible(NULL))
   }
 
-  cmd  <- args[[1]]
-  rest <- args[-1]
-  flags <- grepl("^--", rest)
-  work <- if (any(!flags)) rest[!flags][[1]] else NULL
-
-  # Reject typos rather than silently dropping them.
-  allowed <- c("--quiet", "--bulk", "--execute",
-               "--no-browser", "--parallel", "--port", "--library", "--rebase")
-  given <- sub("=.*$", "", rest[flags])
-  unknown <- setdiff(given, allowed)
-  if (length(unknown)) {
-    stop("dundee: unknown option(s): ", paste(unknown, collapse = ", "),
-         "\n", usage, call. = FALSE)
-  }
-
-  has <- function(f) f %in% rest
-  opt <- function(name, default = NULL) {
-    hit <- grep(paste0("^--", name, "="), rest, value = TRUE)
-    if (length(hit)) sub(paste0("^--", name, "="), "", hit[[1]]) else default
-  }
-  quiet <- has("--quiet")
+  f <- p$flags
+  work <- p$work
+  quiet <- dd_has_flag(f, "quiet")
 
   out <- switch(
-    cmd,
+    p$cmd,
     init = {
       if (is.null(work)) {
-        stop("dundee: init needs a work directory.\n", usage, call. = FALSE)
+        stop("dundee: init needs a work directory.\n", p$usage, call. = FALSE)
       }
       # Without --library the template's placeholder would survive into the new
       # config, quietly pointing the project at ~/photo-ro.
-      if (is.null(opt("library"))) {
+      lib <- dd_flag_value(f, "library")
+      if (is.null(lib)) {
         stop("dundee: init needs --library=DIR, the read-only photo library.\n",
-             usage, call. = FALSE)
+             p$usage, call. = FALSE)
       }
-      dd_init(work, library_root = opt("library"))
+      dd_init(work, library_root = lib)
     },
     config    = dd_config_report(dd_config(work)),
     status    = dd_status(work),
     preflight = dd_preflight(quiet = quiet),
-    inventory = dd_run_inventory(work, parallel = opt("parallel"),
-                                 quiet = quiet, rebase = has("--rebase")),
+    inventory = dd_run_inventory(work, parallel = dd_flag_value(f, "parallel"),
+                                 quiet = quiet,
+                                 rebase = dd_has_flag(f, "rebase")),
     analyze   = dd_run_analyze(work, quiet = quiet),
-    app       = dd_app(work, port = as.integer(opt("port", 7654L)),
-                       launch_browser = !has("--no-browser")),
-    plan      = dd_run_plan(work, bulk = has("--bulk"), quiet = quiet),
-    move      = dd_run_move(work, execute = has("--execute"), quiet = quiet),
-    stop("dundee: unknown command '", cmd, "'.\n", usage, call. = FALSE)
+    app       = dd_app(work, port = as.integer(dd_flag_value(f, "port", 7654L)),
+                       launch_browser = !dd_has_flag(f, "no-browser")),
+    plan      = dd_run_plan(work, bulk = dd_has_flag(f, "bulk"), quiet = quiet),
+    move      = dd_run_move(work, execute = dd_has_flag(f, "execute"),
+                            quiet = quiet)
   )
   invisible(out)
 }
