@@ -9,11 +9,19 @@
 # Error line format (tab-delimited):
 #   b64path  b64reason
 
+# Paths arrive as raw UTF-8 bytes. rawToChar() leaves the result marked
+# "unknown", so R and RSQLite reinterpret it in the native encoding: under a
+# C/POSIX locale a non-ASCII path is then stored escaped (caf<c3><a9>-...),
+# which breaks the resume filter for that file and puts a non-existent path in
+# the generated move script. Marking UTF-8 makes the round-trip byte-exact
+# whatever the locale.
 dd_b64dec <- function(x) {
-  vapply(x, function(s) {
+  out <- vapply(x, function(s) {
     if (is.na(s) || !nzchar(s)) return("")
     rawToChar(base64enc::base64decode(s))
   }, character(1), USE.NAMES = FALSE)
+  Encoding(out) <- "UTF-8"
+  out
 }
 
 dd_staging_cols <- c(
@@ -92,11 +100,17 @@ dd_staging_files <- function(dir, pattern) {
 #' for debugging; an interrupted merge leaves exactly the not-yet-merged shards
 #' behind, and re-running is safe because the upsert is idempotent.
 #'
+#' A file that failed to decode on an earlier run and fingerprints successfully
+#' now has its `errors` row dropped, so `dd_status()`'s "unreadable" count
+#' reflects the current state of the library rather than every failure ever
+#' seen.
+#'
 #' @param con A DBIConnection.
 #' @param cfg A config list (uses `cfg$staging_dir`).
 #' @param quiet Logical; suppress the merge progress bar.
 #' @param prune Logical; delete each shard once it has merged successfully.
-#' @return A list with counts `photos` and `errors`, invisibly.
+#' @return A list with counts `photos`, `errors` and `cleared` (stale error
+#'   rows removed), invisibly.
 #' @export
 dd_import_staging <- function(con, cfg, quiet = FALSE, prune = TRUE) {
   now <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
@@ -165,5 +179,12 @@ dd_import_staging <- function(con, cfg, quiet = FALSE, prune = TRUE) {
     if (isTRUE(prune)) unlink(f)
   }
 
-  invisible(list(photos = n_photos, errors = n_err))
+  # A path that now has a photos row was read successfully, so any errors row
+  # left over from a previous run is stale. Without this the "unreadable" count
+  # only ever grows, and a file fixed by installing a missing vips loader is
+  # reported broken forever.
+  n_cleared <- DBI::dbExecute(
+    con, "DELETE FROM errors WHERE path IN (SELECT path FROM photos)")
+
+  invisible(list(photos = n_photos, errors = n_err, cleared = n_cleared))
 }

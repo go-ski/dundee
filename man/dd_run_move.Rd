@@ -4,12 +4,14 @@
 \alias{dd_run_move}
 \title{Execute the planned moves server-side over SSH.}
 \usage{
-dd_run_move(config = NULL, execute = FALSE)
+dd_run_move(config = NULL, execute = FALSE, quiet = FALSE)
 }
 \arguments{
 \item{config}{A work directory, a config path, or a list from \code{\link[=dd_config]{dd_config()}}.}
 
 \item{execute}{Logical; perform the moves instead of describing them.}
+
+\item{quiet}{Logical; suppress the phase banner and the script's output.}
 }
 \value{
 \code{TRUE}, invisibly.

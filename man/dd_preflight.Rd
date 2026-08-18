@@ -14,8 +14,10 @@ dd_preflight(quiet = FALSE)
 invisibly.
 }
 \description{
-Runs the shell preflight (libvips, exiftool, a hashing tool, sqlite3, ssh)
-and additionally verifies the R packages dundee needs at run time.
+Runs the shell preflight (libvips, exiftool, a hashing tool) and additionally
+verifies the R packages dundee needs at run time. Tools that only one phase
+needs -- \code{ssh} for the move phase, \code{vipsthumbnail} and shiny/bslib for the
+review app -- are reported as warnings and do not make the check fail.
 }
 \examples{
 \dontrun{

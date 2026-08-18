@@ -10,7 +10,9 @@ dd_is_tty <- function() {
 }
 
 # Static pipeline ordinals, purely informational (commands run one at a time).
-dd_phase_ordinal <- c(preflight = 0L, inventory = 1L, analyze = 2L,
+# A label that is absent indexes to NA, which dd_phase() renders without an
+# ordinal -- so this table never needs to be exhaustive.
+dd_phase_ordinal <- c(preflight = 0L, inventory = 1L, analyze = 2L, app = 2L,
                       plan = 3L, move = 3L)
 
 # Phase banner, e.g. "== Phase: inventory (1 of 3) =============".

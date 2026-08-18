@@ -1,6 +1,6 @@
 Package: dundee
 Title: Deduplication of Photo Collections is Done!
-Version: 0.0.1
+Version: 0.1.0
 Authors@R:
     person("George", "Ostrouchov", role = c("aut", "cre"),
            email = "go@tennessee.edu")
@@ -29,7 +29,8 @@ Suggests:
     testthat (>= 3.0.0),
     pkgload
 Config/testthat/edition: 3
-SystemRequirements: libvips (vips, vipsheader, vipsthumbnail), exiftool,
-    b3sum or shasum, sqlite3, ssh, a POSIX shell with find/stat/awk/sort/xargs
+SystemRequirements: libvips (vips, vipsheader; vipsthumbnail for the review
+    app), exiftool, b3sum or shasum, a POSIX shell with
+    find/stat/awk/sort/xargs/od/base64; ssh for the move phase
 URL: https://github.com/go-ski/dundee
 BugReports: https://github.com/go-ski/dundee/issues

@@ -56,6 +56,12 @@ dd_plan_moves <- function(con, cfg,
     SELECT d.photo_id, d.preferred, p.path, p.rel_path
       FROM decisions d JOIN photos p USING (photo_id)
   ")
+  # Drop still-planned rows whose decision has since been withdrawn; the upsert
+  # below only ever adds or updates, so without this they linger and inflate
+  # dd_status(). Rows already marked done are history and stay.
+  DBI::dbExecute(con, "DELETE FROM moves
+                        WHERE state = 'planned'
+                          AND photo_id NOT IN (SELECT photo_id FROM decisions)")
   if (nrow(dec) == 0L) {
     message("No decisions to plan.")
     return(invisible(dec[0, ]))
@@ -67,8 +73,14 @@ dd_plan_moves <- function(con, cfg,
     src = src, dest = dest, stringsAsFactors = FALSE
   )
 
-  utils::write.table(manifest, manifest_path, sep = "\t", quote = FALSE,
-                     row.names = FALSE)
+  # Paths are UTF-8 (see dd_b64dec) and must reach disk as exactly those bytes.
+  # write.table() transliterates to the native encoding first -- under a C
+  # locale that writes escapes instead of the filename -- and fileEncoding=
+  # only double-converts a string that is already marked UTF-8. So format the
+  # rows here and write bytes, as the move script below also does.
+  writeLines(c(paste(names(manifest), collapse = "\t"),
+               do.call(paste, c(unname(manifest), sep = "\t"))),
+             manifest_path, useBytes = TRUE)
 
   # Build a defensive shell script. Single-quote each path (escaping embedded
   # single quotes) so spaces/awkward characters are safe; skip if source is
@@ -89,7 +101,9 @@ dd_plan_moves <- function(con, cfg,
     pb$tick()
   }
   pb$done()
-  writeLines(lines, script_path)
+  # useBytes: the lines carry UTF-8 paths, and the server-side shell wants those
+  # bytes verbatim whatever locale the plan happened to be generated under.
+  writeLines(lines, script_path, useBytes = TRUE)
   Sys.chmod(script_path, "0755")
 
   # Record planned rows (idempotent upsert).

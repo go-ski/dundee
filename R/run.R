@@ -49,8 +49,10 @@ dd_with_con <- function(cfg, f, rebase = FALSE) {
 
 #' Check that external tools and R dependencies are available.
 #'
-#' Runs the shell preflight (libvips, exiftool, a hashing tool, sqlite3, ssh)
-#' and additionally verifies the R packages dundee needs at run time.
+#' Runs the shell preflight (libvips, exiftool, a hashing tool) and additionally
+#' verifies the R packages dundee needs at run time. Tools that only one phase
+#' needs -- `ssh` for the move phase, `vipsthumbnail` and shiny/bslib for the
+#' review app -- are reported as warnings and do not make the check fail.
 #'
 #' @param quiet Logical; suppress the per-tool report.
 #' @return `TRUE` if everything needed is present, otherwise `FALSE`,
@@ -107,6 +109,9 @@ dd_preflight <- function(quiet = FALSE) {
 #' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param parallel Optional integer overriding `parallel` from the config.
 #' @param quiet Logical; suppress stage output from the shell workers.
+#' @param rebase Logical; accept a `library_root` that differs from the one the
+#'   store was built against. Only correct when the *same* library has been
+#'   re-mounted at a new path -- every stored path is rewritten to match.
 #' @return A list with `enumerated`, `todo`, `photos` and `errors` counts,
 #'   invisibly.
 #' @examples
@@ -115,7 +120,7 @@ dd_preflight <- function(quiet = FALSE) {
 #' }
 #' @export
 dd_run_inventory <- function(config = NULL, parallel = NULL,
-                             quiet = FALSE) {
+                             quiet = FALSE, rebase = FALSE) {
   cfg <- dd_as_config(config, require_library = TRUE)
   if (!is.null(parallel)) cfg$parallel <- as.integer(parallel)
   dd_config_snapshot(cfg)                      # <- provenance
@@ -134,7 +139,7 @@ dd_run_inventory <- function(config = NULL, parallel = NULL,
   dd_step("resume-filtering against the store", quiet = quiet)
   n_todo <- dd_with_con(cfg, function(con) {
     dd_resume_todo(con, enum, todo)
-  })
+  }, rebase = rebase)
   message(sprintf("resume: %d of %d file(s) need fingerprinting",
                   n_todo, n_enum))
 
@@ -267,6 +272,7 @@ dd_run_plan <- function(config = NULL, bulk = FALSE, quiet = FALSE) {
 #'
 #' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param execute Logical; perform the moves instead of describing them.
+#' @param quiet Logical; suppress the phase banner and the script's output.
 #' @return `TRUE`, invisibly.
 #' @examples
 #' \dontrun{
@@ -274,11 +280,11 @@ dd_run_plan <- function(config = NULL, bulk = FALSE, quiet = FALSE) {
 #' dd_run_move("config.yml", execute = TRUE)  # for real
 #' }
 #' @export
-dd_run_move <- function(config = NULL, execute = FALSE) {
+dd_run_move <- function(config = NULL, execute = FALSE, quiet = FALSE) {
   cfg <- dd_as_config(config)
   dd_require_move_config(cfg)
   dd_config_snapshot(cfg)                      # <- provenance
-  dd_phase("move")
+  dd_phase("move", quiet = quiet)
   script <- file.path(cfg$work_dir, "moves.sh")
   if (!file.exists(script)) {
     stop("dundee: no move script at ", script,
@@ -286,7 +292,20 @@ dd_run_move <- function(config = NULL, execute = FALSE) {
   }
   target <- paste0(cfg$ssh_user, "@", cfg$ssh_host)
   dd_sh("70-execute-moves.sh",
-        c(script, target, if (isTRUE(execute)) "--execute" else ""))
+        c(script, target, if (isTRUE(execute)) "--execute" else ""),
+        quiet = quiet)
+
+  # The script runs under `set -euo pipefail`, so reaching here means every
+  # command in it succeeded; mark the batch done. Without this dd_status()
+  # reports "0 done" forever and keeps recommending the move that just ran.
+  if (isTRUE(execute)) {
+    n <- dd_with_con(cfg, function(con) {
+      DBI::dbExecute(con, "UPDATE moves SET state = 'done', moved_at = ?
+                            WHERE state = 'planned'",
+                     params = list(format(Sys.time(), "%Y-%m-%dT%H:%M:%S")))
+    })
+    message(sprintf("move: marked %d move(s) done", n))
+  }
   invisible(TRUE)
 }
 
@@ -327,14 +346,17 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
     "  config    [work_dir]           show the config",
     "  status    [work_dir]           what is done, and what is next",
     "  preflight                      check external tools and R packages",
-    "  inventory [work_dir] [--parallel=N] [--quiet]",
+    "  inventory [work_dir] [--parallel=N] [--rebase] [--quiet]",
     "  analyze   [work_dir] [--quiet]",
     "  app       [work_dir] [--port=N] [--no-browser]",
     "  plan      [work_dir] [--bulk] [--quiet]",
-    "  move      [work_dir] [--execute]",
+    "  move      [work_dir] [--execute] [--quiet]",
     "",
-    "  With no work_dir: $DUNDEE_WORK, else ./config.yml, else ./work.",
+    "  With no work_dir, dundee resolves in order: the dd_use() session",
+    "  default, $DUNDEE_WORK, $DUNDEE_CONFIG, ./config.yml, ./work/config.yml.",
     "  --quiet suppresses phase banners and progress output.",
+    "  --rebase accepts a library re-mounted at a new path (rewrites",
+    "  every stored path); see 'this store was built against library_root'.",
     sep = "\n"
   )
   if (!length(args) || args[[1]] %in% c("help", "-h", "--help")) {
@@ -370,18 +392,24 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
       if (is.null(work)) {
         stop("dundee: init needs a work directory.\n", usage, call. = FALSE)
       }
+      # Without --library the template's placeholder would survive into the new
+      # config, quietly pointing the project at ~/photo-ro.
+      if (is.null(opt("library"))) {
+        stop("dundee: init needs --library=DIR, the read-only photo library.\n",
+             usage, call. = FALSE)
+      }
       dd_init(work, library_root = opt("library"))
     },
     config    = dd_config_report(dd_config(work)),
     status    = dd_status(work),
     preflight = dd_preflight(quiet = quiet),
     inventory = dd_run_inventory(work, parallel = opt("parallel"),
-                                 quiet = quiet),
+                                 quiet = quiet, rebase = has("--rebase")),
     analyze   = dd_run_analyze(work, quiet = quiet),
     app       = dd_app(work, port = as.integer(opt("port", 7654L)),
                        launch_browser = !has("--no-browser")),
     plan      = dd_run_plan(work, bulk = has("--bulk"), quiet = quiet),
-    move      = dd_run_move(work, execute = has("--execute")),
+    move      = dd_run_move(work, execute = has("--execute"), quiet = quiet),
     stop("dundee: unknown command '", cmd, "'.\n", usage, call. = FALSE)
   )
   invisible(out)

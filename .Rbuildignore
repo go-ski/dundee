@@ -1,7 +1,4 @@
 ^run\.sh$
-^PLAN\.md$
 ^dev-test\.R$
 ^config\.example\.yml$
 ^work$
-^\.github$
-^LICENSE\.md$

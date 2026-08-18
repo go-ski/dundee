@@ -51,18 +51,37 @@ dd_resolve_path <- function(p) {
 # and cache per directory, since dd_config() is called on every stage.
 dd_case_cache <- new.env(parent = emptyenv())
 
+dd_flip_case <- function(x) {
+  chartr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", x)
+}
+
+# The probe must be READ-ONLY: this runs on library_root, which is mounted
+# read-only and whose mtime must not move (an earlier version created and
+# deleted a .dundee-Case-<pid> file here, which tests/e2e.sh caught as
+# "library was written to"). Instead, take an existing entry whose name changes
+# under a case flip and ask whether the flipped name still resolves.
 dd_fs_case_insensitive <- function(path = tempdir()) {
   dir <- path
   while (!dir.exists(dir) && dirname(dir) != dir) dir <- dirname(dir)
   key <- dir
   hit <- dd_case_cache[[key]]
   if (!is.null(hit)) return(hit)
-  stem <- paste0(".dundee-Case-", Sys.getpid())
-  probe <- file.path(dir, stem)
-  on.exit(unlink(probe), add = TRUE)
-  ok <- isTRUE(suppressWarnings(file.create(probe, showWarnings = FALSE)))
-  res <- if (!ok) identical(Sys.info()[["sysname"]], "Darwin") else
-    file.exists(file.path(dir, toupper(stem)))
+
+  entries <- tryCatch(list.files(dir, all.files = TRUE, no.. = TRUE),
+                      error = function(e) character(0))
+  flipped <- dd_flip_case(entries)
+  cased <- flipped != entries
+  res <- if (any(cased & flipped %in% entries)) {
+    # Two entries differing only in case coexist: definitively case-sensitive.
+    FALSE
+  } else if (any(cased)) {
+    file.exists(file.path(dir, flipped[cased][[1]]))
+  } else {
+    # Empty directory, or no entry carries a letter: fall back to the platform
+    # default (APFS/HFS+ are case-insensitive unless deliberately formatted).
+    identical(Sys.info()[["sysname"]], "Darwin")
+  }
   assign(key, res, envir = dd_case_cache)
   res
 }
@@ -140,8 +159,9 @@ dd_work_dir <- function(work_dir = NULL) {
 #'   library lives here.
 #' @param library_root Read-only root of the photo library.
 #' @param ... Further scalar config fields, e.g. `ssh_host = "nas.local"`.
-#' @param overwrite Replace an existing `config.yml` (the previous version is
-#'   archived to `config.history/` either way).
+#' @param overwrite Replace an existing `config.yml`, archiving the previous
+#'   version to `config.history/` first. Without it an existing config is left
+#'   untouched and nothing is archived.
 #' @return The validated config list, invisibly.
 #' @export
 dd_init <- function(work_dir, library_root = NULL, ..., overwrite = FALSE) {
@@ -426,6 +446,22 @@ dd_config_snapshot <- function(cfg) {
   invisible(out)
 }
 
+# Move every stored absolute path from one library root to another. Only the
+# root prefix changes; the relative tree below it is what identifies a photo, so
+# rel_path is untouched. Returns the number of rows rewritten.
+dd_rebase_paths <- function(con, old_root, new_root) {
+  old <- paste0(sub("/+$", "", old_root), "/")
+  new <- paste0(sub("/+$", "", new_root), "/")
+  n <- 0L
+  for (tbl in c("photos", "errors")) {
+    n <- n + DBI::dbExecute(
+      con, sprintf("UPDATE %s SET path = ? || substr(path, ?)
+                     WHERE substr(path, 1, ?) = ?", tbl),
+      params = list(new, nchar(old) + 1L, nchar(old), old))
+  }
+  n
+}
+
 # fingerprint_grid and library_root are baked into stored rows: changing the
 # grid makes old and new fingerprints incomparable; changing library_root
 # invalidates every stored absolute path. Both were silent corruptions.
@@ -451,13 +487,21 @@ dd_config_guard <- function(con, cfg, rebase = FALSE) {
          call. = FALSE)
   }
   root <- get1("library_root")
-  if (!is.null(root) && !is.null(cfg$library_root) &&
-      nzchar(cfg$library_root) && !identical(root, cfg$library_root) &&
-      !isTRUE(rebase)) {
+  moved <- !is.null(root) && !is.null(cfg$library_root) &&
+    nzchar(cfg$library_root) && !identical(root, cfg$library_root)
+  if (moved && !isTRUE(rebase)) {
     stop("dundee: this store was built against library_root\n    ", root,
          "\n  but config.yml now says\n    ", cfg$library_root,
          "\n  Re-run with rebase = TRUE only if the same library was ",
          "re-mounted at a new path.", call. = FALSE)
+  }
+  if (moved) {
+    # Recording the new root is not enough: every stored path is absolute under
+    # the old one, so without rewriting them the resume filter matches nothing
+    # and dd_translate_path() rejects every row as "not under library_root".
+    n <- dd_rebase_paths(con, root, cfg$library_root)
+    message(sprintf("dundee: rebased %d stored path(s)\n    %s\n  ->  %s",
+                    n, root, cfg$library_root))
   }
   set1("fingerprint_grid", cfg$fingerprint_grid)
   if (!is.null(cfg$library_root) && nzchar(cfg$library_root)) {

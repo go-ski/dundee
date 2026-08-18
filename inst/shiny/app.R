@@ -34,7 +34,7 @@ group_list <- function() {
 
 group_members <- function(gid) {
   DBI::dbGetQuery(con, sprintf("
-    SELECT p.photo_id, p.rel_path, p.width, p.height, p.size, p.format,
+    SELECT p.photo_id, p.path, p.rel_path, p.width, p.height, p.size, p.format,
            p.meta_count, p.capture_time, p.file_hash, p.pixel_hash,
            d.preferred
       FROM groups g JOIN photos p USING (photo_id)
@@ -100,11 +100,10 @@ server <- function(input, output, session) {
     gid <- rv$current
     if (is.null(gid)) return(NULL)
     m <- group_members(gid)
-    # Ensure thumbnails for this group's members (lazy, cached).
-    dd_ensure_thumbs(
-      data.frame(photo_id = m$photo_id,
-                 path = file.path(cfg$library_root, m$rel_path)),
-      cfg)
+    # Ensure thumbnails for this group's members (lazy, cached). Use the stored
+    # absolute path rather than rebuilding it from library_root, which dd_app()
+    # does not require to be set (and file.path(NULL, x) is character(0)).
+    dd_ensure_thumbs(data.frame(photo_id = m$photo_id, path = m$path), cfg)
     cards <- lapply(seq_len(nrow(m)), function(i) {
       pid <- m$photo_id[i]
       is_pref <- !is.na(m$preferred[i]) && m$preferred[i] == 1

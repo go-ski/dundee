@@ -71,6 +71,56 @@ test_that("the newest shard wins and shards are pruned after merge", {
   expect_equal(DBI::dbGetQuery(con, "SELECT size FROM photos")$size, 54461L)
 })
 
+test_that("an error row is cleared once the file reads successfully", {
+  cfg <- stage_cfg()
+  b64 <- function(x) base64enc::base64encode(charToRaw(x))
+  con <- dd_db_connect(cfg); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  dd_db_init(con)
+
+  # Run 1: vips cannot decode it.
+  writeLines(paste(b64("/lib/x.heic"), b64("decode failed"), sep = "\t"),
+             file.path(cfg$staging_dir, "shard.20260101T000000Z.1.err"))
+  r1 <- dd_import_staging(con, cfg, quiet = TRUE)
+  expect_equal(r1$errors, 1L)
+  expect_equal(DBI::dbGetQuery(con, "SELECT COUNT(*) n FROM errors")$n, 1L)
+
+  # Run 2: libheif is installed and the same file fingerprints fine.
+  writeLines(stage_row("/lib/x.heic", 100L, "px"),
+             file.path(cfg$staging_dir, "shard.20260102T000000Z.1.tsv"))
+  r2 <- dd_import_staging(con, cfg, quiet = TRUE)
+  expect_equal(r2$photos, 1L)
+  expect_equal(r2$cleared, 1L)
+  expect_equal(DBI::dbGetQuery(con, "SELECT COUNT(*) n FROM errors")$n, 0L)
+})
+
+test_that("a still-failing file keeps its error row", {
+  cfg <- stage_cfg()
+  b64 <- function(x) base64enc::base64encode(charToRaw(x))
+  con <- dd_db_connect(cfg); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  dd_db_init(con)
+  writeLines(paste(b64("/lib/broken.jpg"), b64("decode failed"), sep = "\t"),
+             file.path(cfg$staging_dir, "shard.20260101T000000Z.1.err"))
+  res <- dd_import_staging(con, cfg, quiet = TRUE)
+  expect_equal(res$cleared, 0L)
+  expect_equal(DBI::dbGetQuery(con, "SELECT COUNT(*) n FROM errors")$n, 1L)
+})
+
+test_that("non-ASCII paths round-trip whatever the locale marks them", {
+  # dd_b64dec() must mark UTF-8; leaving the encoding "unknown" made a C-locale
+  # run store the path escaped, so the resume filter never matched it again.
+  cfg <- stage_cfg()
+  con <- dd_db_connect(cfg); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  dd_db_init(con)
+  p <- "/lib/café-señor.jpg"
+  writeLines(stage_row(p, 42L, "px"),
+             file.path(cfg$staging_dir, "shard.20260101T000000Z.1.tsv"))
+  dd_import_staging(con, cfg, quiet = TRUE)
+
+  got <- DBI::dbGetQuery(con, "SELECT path FROM photos")$path
+  expect_equal(charToRaw(got), charToRaw(p))
+  expect_false(grepl("<", got, fixed = TRUE))
+})
+
 test_that("prune = FALSE keeps the shards", {
   cfg <- stage_cfg()
   writeLines(stage_row("/lib/y.jpg", 1L, "h"),

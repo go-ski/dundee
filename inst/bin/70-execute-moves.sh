@@ -5,7 +5,7 @@
 # `[ -e source ]` guards baked into the generated script.
 #
 # Usage: 70-execute-moves.sh SCRIPT_SH SSH_TARGET [--execute]
-#   SCRIPT_SH   path to the moves.sh produced by 60-plan-moves.R
+#   SCRIPT_SH   path to the moves.sh produced by dd_plan_moves()
 #   SSH_TARGET  e.g. admin@synology.local
 set -euo pipefail
 

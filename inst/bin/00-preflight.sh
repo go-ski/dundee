@@ -4,6 +4,7 @@
 set -euo pipefail
 
 missing=0
+# need: absent means dundee cannot run at all -> fail the check.
 need() {
   if command -v "$1" >/dev/null 2>&1; then
     printf 'ok   %-14s %s\n' "$1" "$(command -v "$1")"
@@ -13,18 +14,29 @@ need() {
   fi
 }
 
+# want: needed by one phase only. Absent is worth saying, but a machine that can
+# run inventory and analyze should not be told it is missing requirements.
+want() {
+  if command -v "$1" >/dev/null 2>&1; then
+    printf 'ok   %-14s %s\n' "$1" "$(command -v "$1")"
+  else
+    printf 'warn %-14s %s\n' "$1" "${2:-}"
+  fi
+}
+
 echo "== required tools =="
 need vips          "install libvips (brew install vips)"
 need vipsheader    "part of libvips"
-need vipsthumbnail "part of libvips"
 need exiftool      "brew install exiftool"
-need sqlite3       "ships with macOS"
-need ssh           "needed for Phase 3 server-side moves"
 need od            "coreutils / ships with macOS"
 need awk
 need find
 need xargs
 need base64
+
+echo "== phase-specific tools (optional) =="
+want vipsthumbnail "part of libvips; needed only by the review app"
+want ssh           "needed only by phase 3 (move)"
 
 echo "== hashing tool (need one) =="
 if command -v b3sum >/dev/null 2>&1; then

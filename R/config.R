@@ -45,9 +45,10 @@ dd_config_defaults <- function() {
     hamming_threshold = 5L,
     # Number of LSH bands used to block near-duplicate candidates.
     lsh_bands = 8L,
-    # Ordered list of bulk preference rules (first match wins as tie-breakers
-    # are applied in order). Supported: max_pixels, max_filesize, max_meta,
-    # oldest_capture, folder_priority.
+    # Ordered list of bulk preference rules. All of them are applied, in
+    # sequence, as lexicographic tie-breakers; photo_id breaks any tie left
+    # over. Supported: max_pixels, max_filesize, max_meta, oldest_capture,
+    # folder_priority.
     preference_rules = c("max_pixels", "max_filesize", "max_meta",
                          "oldest_capture"),
     # Folders (relative to library_root) that win when folder_priority is used,

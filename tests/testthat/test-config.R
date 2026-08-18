@@ -202,6 +202,71 @@ test_that("the store guard catches a changed fingerprint grid or library root", 
   expect_true(dd_config_guard(con, cfg3, rebase = TRUE))
 })
 
+test_that("the case probe writes nothing into the directory it tests", {
+  # library_root is mounted read-only; probing it must not move its mtime.
+  # An earlier version created a .dundee-Case-<pid> file here.
+  d <- tempfile("probe-"); dir.create(d)
+  file.create(file.path(d, "Photo.jpg"))
+  before <- list.files(d, all.files = TRUE, no.. = TRUE)
+  mtime_before <- file.mtime(d)
+
+  rm(list = ls(dd_case_cache), envir = dd_case_cache)   # defeat memoisation
+  res <- dd_fs_case_insensitive(d)
+
+  expect_type(res, "logical")
+  expect_equal(list.files(d, all.files = TRUE, no.. = TRUE), before)
+  expect_equal(file.mtime(d), mtime_before)
+})
+
+test_that("the case probe detects a case-sensitive filesystem", {
+  d <- tempfile("probe-"); dir.create(d)
+  # Two entries differing only in case can only coexist when case matters.
+  ok <- file.create(file.path(d, "Photo.jpg")) &&
+    isTRUE(suppressWarnings(file.create(file.path(d, "photo.jpg")))) &&
+    length(list.files(d)) == 2L
+  skip_if_not(ok, "this filesystem is case-insensitive")
+  rm(list = ls(dd_case_cache), envir = dd_case_cache)
+  expect_false(dd_fs_case_insensitive(d))
+})
+
+test_that("rebase rewrites stored paths onto the new library root", {
+  old <- tempfile("lib-old-"); dir.create(old)
+  new <- tempfile("lib-new-"); dir.create(new)
+  wd <- new_work(lib = old)
+  cfg <- dd_config(wd)
+  con <- dd_db_connect(cfg); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  dd_db_init(con)
+  expect_true(dd_config_guard(con, cfg))
+
+  DBI::dbExecute(con, "INSERT INTO photos(path, rel_path) VALUES(?, 'a.jpg')",
+                 params = list(file.path(cfg$library_root, "a.jpg")))
+  DBI::dbExecute(con, "INSERT INTO errors(path, reason) VALUES(?, 'x')",
+                 params = list(file.path(cfg$library_root, "b.jpg")))
+
+  moved <- cfg; moved$library_root <- dd_resolve_path(new)
+  expect_error(dd_config_guard(con, moved), "library_root")
+  expect_message(dd_config_guard(con, moved, rebase = TRUE), "rebased 2")
+
+  expect_equal(DBI::dbGetQuery(con, "SELECT path FROM photos")$path,
+               file.path(moved$library_root, "a.jpg"))
+  expect_equal(DBI::dbGetQuery(con, "SELECT path FROM errors")$path,
+               file.path(moved$library_root, "b.jpg"))
+  # and the guard is satisfied from now on
+  expect_true(dd_config_guard(con, moved))
+})
+
+test_that("config.example.yml matches the installed template", {
+  tmpl <- try(dd_template_lines(), silent = TRUE)
+  skip_if(inherits(tmpl, "try-error"), "template not reachable in this run mode")
+  example <- file.path(dd_resolve_path("."), "config.example.yml")
+  for (up in c("..", file.path("..", ".."), file.path("..", "..", ".."))) {
+    if (file.exists(example)) break
+    example <- dd_resolve_path(file.path(up, "config.example.yml"))
+  }
+  skip_if_not(file.exists(example), "config.example.yml not in this build")
+  expect_equal(readLines(example), tmpl)
+})
+
 test_that("dd_status reports an empty project and names the next step", {
   wd <- new_work()
   expect_message(dd_status(wd), "store not created yet")

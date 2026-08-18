@@ -4,7 +4,7 @@
 \alias{dd_run_inventory}
 \title{Run the inventory phase.}
 \usage{
-dd_run_inventory(config = NULL, parallel = NULL, quiet = FALSE)
+dd_run_inventory(config = NULL, parallel = NULL, quiet = FALSE, rebase = FALSE)
 }
 \arguments{
 \item{config}{A work directory, a config path, or a list from \code{\link[=dd_config]{dd_config()}}.}
@@ -12,6 +12,10 @@ dd_run_inventory(config = NULL, parallel = NULL, quiet = FALSE)
 \item{parallel}{Optional integer overriding \code{parallel} from the config.}
 
 \item{quiet}{Logical; suppress stage output from the shell workers.}
+
+\item{rebase}{Logical; accept a \code{library_root} that differs from the one the
+store was built against. Only correct when the \emph{same} library has been
+re-mounted at a new path -- every stored path is rewritten to match.}
 }
 \value{
 A list with \code{enumerated}, \code{todo}, \code{photos} and \code{errors} counts,

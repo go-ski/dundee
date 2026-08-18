@@ -1,4 +1,55 @@
-# dundee (development version)
+# dundee 0.1.0
+
+## dundee 0.1.0 Correctness fixes
+
+* **Group ids are now stable across analyze runs.** They were assigned by
+  position, so a later import that created a group ahead of an existing one
+  shifted every id after it. Because `dd_apply_bulk_decisions()` keyed
+  "already decided" off `group_id`, a stale decision then shadowed a *different*
+  group, whose photos were silently left undecided and never reached
+  `moves.tsv`. Ids are now derived from the group's smallest member `photo_id`,
+  the bulk pass asks per photo rather than per group, and `dd_analyze()`
+  re-points existing decisions at the group their photo is in now.
+
+* **Non-ASCII filenames survive a non-UTF-8 locale.** `dd_b64dec()` left decoded
+  paths marked `"unknown"`, so under `C`/`POSIX` they were stored escaped
+  (`caf<c3><a9>-...`): the resume filter missed those files on every run and the
+  generated move script pointed at paths that did not exist. They are now marked
+  UTF-8, and `moves.tsv`/`moves.sh` are written without re-encoding. A store
+  built under `C` by an earlier version still holds mangled paths and needs
+  rebuilding.
+
+* **`dd_config()` no longer writes into `library_root`.** The case-sensitivity
+  probe created and deleted a file in every directory it tested, including the
+  read-only library, moving its mtime. It now flips the case of an existing
+  entry and asks whether the result resolves. This was the sole cause of
+  `tests/e2e.sh` reporting `FAIL: library was written to`.
+
+* **`move --execute` marks its rows done.** Nothing ever set a move's state, so
+  `dd_status()` reported "0 done" forever and kept recommending the move that
+  had just run.
+
+* **Error rows are cleared once a file reads successfully.** A file that failed
+  to decode and was later fixed (say by installing a vips loader) stayed in the
+  `errors` table, so `dd_status()`'s "unreadable" count only ever grew.
+
+* `rebase = TRUE` is reachable at last, as `dd_run_inventory(rebase = TRUE)` and
+  `run.sh inventory --rebase`. It now also rewrites the stored paths, which the
+  guard never did — recording the new root alone left every absolute path
+  pointing at the old mount.
+
+* `dd_run_move()` gained `quiet`, so `quiet = TRUE` / `--quiet` really does work
+  on every stage. `run.sh init` now requires `--library=DIR` instead of quietly
+  keeping the template's `~/photo-ro` placeholder. The review app uses the
+  stored `photos.path` rather than rebuilding it from `library_root`.
+
+* `dd_plan_moves()` drops still-planned rows whose decision has been withdrawn,
+  instead of leaving them to inflate `dd_status()`.
+
+* Preflight no longer requires `sqlite3`, which the package never calls (all
+  store access is RSQLite; only `tests/e2e.sh` uses the CLI). `ssh` and
+  `vipsthumbnail` are reported as warnings rather than failures, since they are
+  needed only by the move phase and the review app respectively.
 
 ## Work directory as the project handle
 
@@ -28,7 +79,7 @@
 
 * The annotated template now ships in `inst/templates/config.yml`, so it is
   present in an installed package; `config.example.yml` at the repo root is a
-  copy of it, checked by the test suite. Previously `dd_config_example()`
+  copy of it, kept in step by the test suite. Previously `dd_config_example()`
   regenerated the file from defaults through `yaml::as.yaml()`, which stripped
   every comment.
 

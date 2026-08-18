@@ -3,7 +3,8 @@
 # Input is a NUL-delimited list of source paths (the resume-filtered todo list).
 #
 # Usage: 20-fingerprint.sh TODO_NUL STAGING_DIR TEMP_DIR LIBRARY_ROOT \
-#                          [PARALLEL] [GRID]
+#                          [PARALLEL] [GRID] [TOTAL]
+# TOTAL is only used to render the progress counter.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/lib.sh"
