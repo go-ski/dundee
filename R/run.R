@@ -248,7 +248,11 @@ dd_run_inventory <- function(config = NULL, parallel = NULL,
   }
 
   dd_step("merging staging results into the store", quiet = quiet)
-  res <- dd_with_con(cfg, function(con) dd_import_staging(con, cfg, quiet = quiet))
+  res <- dd_with_con(cfg, function(con) {
+    out <- dd_import_staging(con, cfg, quiet = quiet)
+    dd_stage_stamp(con, "inventory", cfg)      # <- what dd_status() compares
+    out
+  })
   message(sprintf("inventory: merged %d photo row(s), %d error row(s)",
                   res$photos, res$errors))
 
@@ -276,7 +280,11 @@ dd_run_analyze <- function(config = NULL, quiet = FALSE) {
   cfg <- dd_as_config(config)
   dd_config_snapshot(cfg)                      # <- provenance
   dd_phase("analyze", quiet = quiet)
-  out <- dd_with_con(cfg, function(con) dd_analyze(con, cfg, quiet = quiet))
+  out <- dd_with_con(cfg, function(con) {
+    res <- dd_analyze(con, cfg, quiet = quiet)
+    dd_stage_stamp(con, "analyze", cfg)        # <- what dd_status() compares
+    res
+  })
   ngroups <- if (nrow(out)) length(unique(out$group_id)) else 0L
   message(sprintf("analyze: %d group(s) covering %d photo(s)",
                   ngroups, nrow(out)))
@@ -352,9 +360,14 @@ dd_run_plan <- function(config = NULL, bulk = FALSE, quiet = FALSE) {
       dd_step("applying bulk preference decisions", quiet = quiet)
       n <- dd_apply_bulk_decisions(con, cfg, quiet = quiet)
       message(sprintf("applied bulk decisions to %d undecided photo(s)", n))
+      # Only the bulk pass consumes the preference rules; a manual choice from
+      # the review app is not governed by them, so it stamps nothing.
+      dd_stage_stamp(con, "decide", cfg)
     }
     dd_step("planning moves", quiet = quiet)
-    dd_plan_moves(con, cfg, quiet = quiet)
+    res <- dd_plan_moves(con, cfg, quiet = quiet)
+    dd_stage_stamp(con, "plan", cfg)           # <- what dd_status() compares
+    res
   })
   invisible(out)
 }

@@ -1,5 +1,22 @@
 # Orchestrate exact + near clustering and persist groups to the store.
 
+# Drop decisions and still-planned moves for photos that are no longer in any
+# group. dd_plan_moves() reads `decisions`, never `groups`, so without this a
+# tightened hamming_threshold dissolves a group and dundee still relocates its
+# photos. Rows already marked done are history and stay, matching the rule
+# dd_plan_moves() applies to withdrawn decisions.
+#
+# This discards manual decisions too, when their photo leaves every group: the
+# group the reviewer was describing no longer exists, so the choice has nothing
+# left to mean.
+dd_prune_ungrouped <- function(con) {
+  DBI::dbExecute(con, "DELETE FROM moves
+                        WHERE state = 'planned'
+                          AND photo_id NOT IN (SELECT photo_id FROM groups)")
+  DBI::dbExecute(con, "DELETE FROM decisions
+                        WHERE photo_id NOT IN (SELECT photo_id FROM groups)")
+}
+
 #' Build duplicate groups from the photos table and write the `groups` table.
 #'
 #' Exact groups (shared decoded-pixel hash) take precedence; near groups are
@@ -42,7 +59,10 @@ dd_analyze <- function(con, cfg, quiet = FALSE) {
 
   combined <- rbind(exact_groups, near_groups)
   if (nrow(combined) == 0L) {
-    DBI::dbExecute(con, "DELETE FROM groups;")
+    DBI::dbWithTransaction(con, {
+      DBI::dbExecute(con, "DELETE FROM groups;")
+      dd_prune_ungrouped(con)
+    })
     return(invisible(combined))
   }
   # group_id must be STABLE across analyze runs, because decisions rows carry
@@ -68,6 +88,7 @@ dd_analyze <- function(con, cfg, quiet = FALSE) {
                             SET group_id = (SELECT g.group_id FROM groups g
                                              WHERE g.photo_id = decisions.photo_id)
                           WHERE photo_id IN (SELECT photo_id FROM groups)")
+    dd_prune_ungrouped(con)
   })
   invisible(out)
 }

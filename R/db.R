@@ -69,6 +69,14 @@ dd_db_init <- function(con) {
        dest        TEXT NOT NULL,
        state       TEXT NOT NULL DEFAULT 'planned',
        moved_at    TEXT
+     );",
+    # Store-level provenance: the config invariants dd_config_guard() enforces,
+    # and one stamp per stage recording the settings it last ran under. Created
+    # here rather than by the guard so dd_status(), which deliberately never
+    # applies the guard, can still read it.
+    "CREATE TABLE IF NOT EXISTS meta (
+       key         TEXT PRIMARY KEY,
+       value       TEXT
      );"
   )
   for (s in stmts) DBI::dbExecute(con, s)

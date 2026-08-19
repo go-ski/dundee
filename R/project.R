@@ -462,22 +462,26 @@ dd_rebase_paths <- function(con, old_root, new_root) {
   n
 }
 
+# The meta table (created by dd_db_init) holds store-level provenance: config
+# invariants, the writing version, and the per-stage config stamps below.
+dd_meta_get <- function(con, k) {
+  v <- DBI::dbGetQuery(con, "SELECT value FROM meta WHERE key = ?",
+                       params = list(k))
+  if (nrow(v)) v$value[[1]] else NULL
+}
+
+dd_meta_set <- function(con, k, v) {
+  DBI::dbExecute(con, "INSERT INTO meta(key, value) VALUES(?, ?)
+                       ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                 params = list(k, as.character(v)))
+}
+
 # fingerprint_grid and library_root are baked into stored rows: changing the
 # grid makes old and new fingerprints incomparable; changing library_root
 # invalidates every stored absolute path. Both were silent corruptions.
 dd_config_guard <- function(con, cfg, rebase = FALSE) {
-  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS meta (
-                         key TEXT PRIMARY KEY, value TEXT)")
-  get1 <- function(k) {
-    v <- DBI::dbGetQuery(con, "SELECT value FROM meta WHERE key = ?",
-                         params = list(k))
-    if (nrow(v)) v$value[[1]] else NULL
-  }
-  set1 <- function(k, v) {
-    DBI::dbExecute(con, "INSERT INTO meta(key, value) VALUES(?, ?)
-                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                   params = list(k, as.character(v)))
-  }
+  get1 <- function(k) dd_meta_get(con, k)
+  set1 <- function(k, v) dd_meta_set(con, k, v)
   grid <- get1("fingerprint_grid")
   if (!is.null(grid) && !identical(as.integer(grid), cfg$fingerprint_grid)) {
     stop("dundee: this store was built with fingerprint_grid = ", grid,
@@ -512,16 +516,101 @@ dd_config_guard <- function(con, cfg, rebase = FALSE) {
 }
 
 # ---------------------------------------------------------------------------
+# config drift: what a config.yml edit invalidates
+# ---------------------------------------------------------------------------
+
+# Config keys each stage consumes. Editing one of these invalidates what that
+# stage wrote; editing anything else (parallel, ssh_*, db_path) does not. In
+# pipeline order, which is also the order drift is reported and resolved.
+dd_stage_keys <- list(
+  inventory = c("library_root", "extensions", "cruft", "fingerprint_grid"),
+  analyze   = c("fingerprint_grid", "hamming_threshold", "lsh_bands"),
+  decide    = c("preference_rules", "folder_priority"),
+  plan      = c("library_root", "nas_root", "preferred_root",
+                "nonpreferred_root")
+)
+
+# What to re-run for each stage. `decide` names dd_apply_bulk_decisions()
+# rather than dd_run_plan(bulk = TRUE) because that is the truth: dd_run_plan()
+# does not pass overwrite, so a bulk pass skips every photo that already has a
+# decision and would not re-apply the edited rules.
+dd_stage_cmd <- c(
+  inventory = "dd_run_inventory()",
+  analyze   = "dd_run_analyze()",
+  decide    = "dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)",
+  plan      = "dd_run_plan()"
+)
+
+# Flatten one config value to a comparable string. Deliberately not YAML: a
+# round-trip through as.yaml()/yaml.load() turns character(0) into list() and
+# blurs integer against character, which would report drift that is not there.
+dd_key_string <- function(v) {
+  if (is.null(v) || !length(v)) return("<unset>")
+  paste(as.character(v), collapse = ",")
+}
+
+# A stage's stamp: one key=value line per config key it consumes.
+dd_stamp_text <- function(cfg, keys) {
+  paste(sprintf("%s=%s", keys, vapply(keys, function(k) dd_key_string(cfg[[k]]),
+                                      character(1))),
+        collapse = "\n")
+}
+
+dd_stamp_parse <- function(txt) {
+  if (is.null(txt) || !nzchar(txt)) return(character(0))
+  parts <- strsplit(strsplit(txt, "\n", fixed = TRUE)[[1]], "=", fixed = TRUE)
+  stats::setNames(
+    vapply(parts, function(p) paste(p[-1], collapse = "="), character(1)),
+    vapply(parts, `[[`, character(1), 1L))
+}
+
+# Record the settings a stage just ran under. Called at the end of a successful
+# stage, so one that failed partway leaves the previous stamp standing.
+dd_stage_stamp <- function(con, stage, cfg) {
+  dd_meta_set(con, paste0("stamp_", stage),
+              dd_stamp_text(cfg, dd_stage_keys[[stage]]))
+  invisible(TRUE)
+}
+
+# Compare the current config against what each stage recorded. Returns only the
+# keys that changed. A stage with no stamp contributes nothing: "never run under
+# a recorded config" is not the same as "changed".
+dd_config_drift <- function(con, cfg) {
+  none <- data.frame(stage = character(0), key = character(0),
+                     was = character(0), now = character(0),
+                     stringsAsFactors = FALSE)
+  have <- DBI::dbExistsTable(con, "meta")
+  if (!have) return(none)
+  out <- none
+  for (stage in names(dd_stage_keys)) {
+    was <- dd_stamp_parse(dd_meta_get(con, paste0("stamp_", stage)))
+    if (!length(was)) next
+    for (k in dd_stage_keys[[stage]]) {
+      if (!k %in% names(was)) next          # stamped by an older version
+      now <- dd_key_string(cfg[[k]])
+      if (!identical(was[[k]], now)) {
+        out <- rbind(out, data.frame(stage = stage, key = k, was = was[[k]],
+                                     now = now, stringsAsFactors = FALSE))
+      }
+    }
+  }
+  out
+}
+
+# ---------------------------------------------------------------------------
 # where am I?
 # ---------------------------------------------------------------------------
 
 #' Report the state of a dundee work directory.
 #'
 #' Read-only: it never applies the config guard, so it still works when the
-#' config and the store have drifted apart.
+#' config and the store have drifted apart. It does report that drift: each
+#' stage records the config keys it consumed, and any that have since been
+#' edited in `config.yml` are listed along with the stage to re-run.
 #'
 #' @param config A work directory, config path, or config list.
-#' @return A one-row data frame of counts, invisibly.
+#' @return A one-row data frame of counts plus a `drift` count of changed
+#'   config keys, invisibly.
 #' @export
 dd_status <- function(config = NULL) {
   cfg <- dd_config(config)
@@ -551,11 +640,33 @@ dd_status <- function(config = NULL) {
           "decided %d | moves %d planned, %d done"),
     out$photos, out$errors, out$groups, out$grouped, out$decided,
     out$planned, out$done))
+
+  dr <- dd_config_drift(con, cfg)
+  out$drift <- nrow(dr)
   nxt <- if (out$photos == 0L) "dd_run_inventory()" else
     if (out$groups == 0L) "dd_run_analyze()" else
       if (out$decided < out$grouped) "dd_app()  # review remaining groups" else
         if (out$planned == 0L && out$done == 0L) "dd_run_plan(bulk = TRUE)" else
           if (out$planned > 0L) "dd_run_move(execute = TRUE)" else "nothing"
+
+  if (nrow(dr)) {
+    # Report the earliest drifted stage first, and recommend it: re-running a
+    # stage implies re-running the ones after it, so the earliest is the only
+    # useful next step.
+    short <- function(s, n = 44L) {
+      if (nchar(s) > n) paste0(substr(s, 1L, n - 3L), "...") else s
+    }
+    for (stage in intersect(names(dd_stage_keys), dr$stage)) {
+      message("  config changed since ", stage, " ran:")
+      sub <- dr[dr$stage == stage, , drop = FALSE]
+      for (i in seq_len(nrow(sub))) {
+        message("    ", sub$key[i], ": ", short(sub$was[i]), " -> ",
+                short(sub$now[i]))
+      }
+    }
+    first <- intersect(names(dd_stage_keys), dr$stage)[[1]]
+    nxt <- paste0(dd_stage_cmd[[first]], "   # config changed")
+  }
   message("  next: ", nxt)
   invisible(out)
 }

@@ -10,9 +10,12 @@ dd_status(config = NULL)
 \item{config}{A work directory, config path, or config list.}
 }
 \value{
-A one-row data frame of counts, invisibly.
+A one-row data frame of counts plus a \code{drift} count of changed
+config keys, invisibly.
 }
 \description{
 Read-only: it never applies the config guard, so it still works when the
-config and the store have drifted apart.
+config and the store have drifted apart. It does report that drift: each
+stage records the config keys it consumed, and any that have since been
+edited in \code{config.yml} are listed along with the stage to re-run.
 }

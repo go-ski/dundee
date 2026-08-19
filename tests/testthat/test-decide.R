@@ -150,3 +150,122 @@ test_that("a group that gained a member keeps its reviewed preferred copy", {
     "SELECT photo_id, preferred FROM decisions ORDER BY photo_id")
   expect_equal(dec$preferred, c(0L, 1L, 0L))   # newcomer is non-preferred
 })
+
+# --- photos that stop being duplicates --------------------------------------
+#
+# dd_plan_moves() reads `decisions`, never `groups`. So a group dissolved by a
+# tightened hamming_threshold used to leave its decisions behind, and dundee
+# went on relocating photos it no longer considered duplicates.
+
+near_store <- function(threshold = 5L) {
+  s <- decide_store()
+  s$cfg$hamming_threshold <- threshold
+  s                                   # default 8 bands over 64 bits
+}
+
+# Two fingerprints 4 bits apart: grouped at threshold 5, separate at 3.
+add_near_pair <- function(con) {
+  DBI::dbExecute(con,
+    "INSERT INTO photos(path, rel_path, size, width, height, meta_count,
+                        pixel_hash, fingerprint)
+     VALUES('/l/n1.jpg', 'n1.jpg', 100, 10, 10, 5, 'AAAA',
+            '0000000000000000')")
+  DBI::dbExecute(con,
+    "INSERT INTO photos(path, rel_path, size, width, height, meta_count,
+                        pixel_hash, fingerprint)
+     VALUES('/l/n2.jpg', 'n2.jpg', 100, 20, 10, 5, 'BBBB',
+            '000000000000000f')")
+}
+
+test_that("tightening the threshold drops the decisions it invalidates", {
+  s <- near_store(5L); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  add_near_pair(s$con)
+  g <- dd_analyze(s$con, s$cfg, quiet = TRUE)
+  expect_equal(nrow(g), 2L)                       # grouped at 5
+  dd_apply_bulk_decisions(s$con, s$cfg, quiet = TRUE)
+  expect_equal(DBI::dbGetQuery(s$con, "SELECT COUNT(*) n FROM decisions")$n, 2L)
+
+  s$cfg$hamming_threshold <- 3L
+  g2 <- dd_analyze(s$con, s$cfg, quiet = TRUE)
+  expect_equal(nrow(g2), 0L)                      # no longer duplicates
+  expect_equal(DBI::dbGetQuery(s$con, "SELECT COUNT(*) n FROM decisions")$n, 0L)
+
+  # and so nothing reaches the move plan
+  s$cfg$library_root <- "/l"; s$cfg$nas_root <- "/v"
+  s$cfg$preferred_root <- "/v/p"; s$cfg$nonpreferred_root <- "/v/n"
+  plan <- suppressMessages(
+    dd_plan_moves(s$con, s$cfg,
+                  manifest_path = file.path(s$cfg$work_dir, "m.tsv"),
+                  script_path = file.path(s$cfg$work_dir, "m.sh"),
+                  quiet = TRUE))
+  expect_equal(nrow(plan), 0L)
+})
+
+test_that("a still-planned move for an un-grouped photo goes too", {
+  s <- near_store(5L); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  add_near_pair(s$con)
+  dd_analyze(s$con, s$cfg, quiet = TRUE)
+  dd_apply_bulk_decisions(s$con, s$cfg, quiet = TRUE)
+  dd_upsert(s$con, "moves",
+            data.frame(photo_id = 1L, src = "/l/n1.jpg", dest = "/v/n1.jpg",
+                       state = "planned", moved_at = NA_character_,
+                       stringsAsFactors = FALSE),
+            key_cols = "photo_id")
+
+  s$cfg$hamming_threshold <- 3L
+  dd_analyze(s$con, s$cfg, quiet = TRUE)
+  expect_equal(DBI::dbGetQuery(s$con, "SELECT COUNT(*) n FROM moves")$n, 0L)
+})
+
+test_that("a move already done survives the prune", {
+  # Done rows are history, not intent -- the same rule dd_plan_moves() applies.
+  s <- near_store(5L); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  add_near_pair(s$con)
+  dd_analyze(s$con, s$cfg, quiet = TRUE)
+  dd_upsert(s$con, "moves",
+            data.frame(photo_id = 1L, src = "/l/n1.jpg", dest = "/v/n1.jpg",
+                       state = "done", moved_at = "2026-01-01T00:00:00",
+                       stringsAsFactors = FALSE),
+            key_cols = "photo_id")
+
+  s$cfg$hamming_threshold <- 3L
+  dd_analyze(s$con, s$cfg, quiet = TRUE)
+  kept <- DBI::dbGetQuery(s$con, "SELECT state FROM moves")
+  expect_equal(kept$state, "done")
+})
+
+test_that("a photo still in a group keeps its reviewed decision", {
+  # The prune must key on "in no group at all", never on group membership
+  # changing -- otherwise re-analyze would discard every manual choice.
+  s <- decide_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  add_photo(s$con, "/l/a1.jpg", "AAAA")
+  add_photo(s$con, "/l/a2.jpg", "AAAA")
+  g <- dd_analyze(s$con, s$cfg, quiet = TRUE)
+  dd_record_decision(s$con, data.frame(
+    photo_id = c(1L, 2L), group_id = unique(g$group_id),
+    preferred = c(0L, 1L), decided_by = "manual"))
+
+  add_photo(s$con, "/l/a3.jpg", "AAAA")           # group grows
+  dd_analyze(s$con, s$cfg, quiet = TRUE)
+
+  dec <- DBI::dbGetQuery(s$con,
+    "SELECT photo_id, preferred, decided_by FROM decisions ORDER BY photo_id")
+  expect_equal(dec$photo_id, c(1L, 2L))
+  expect_equal(dec$preferred, c(0L, 1L))
+  expect_equal(dec$decided_by, c("manual", "manual"))
+})
+
+test_that("analyze with nothing grouped at all clears every decision", {
+  s <- decide_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  add_photo(s$con, "/l/a1.jpg", "AAAA")
+  add_photo(s$con, "/l/a2.jpg", "AAAA")
+  dd_analyze(s$con, s$cfg, quiet = TRUE)
+  dd_apply_bulk_decisions(s$con, s$cfg, quiet = TRUE)
+
+  # Make them distinct: the early-return branch of dd_analyze() must prune too.
+  DBI::dbExecute(s$con, "UPDATE photos SET pixel_hash = 'ZZZZ',
+                          fingerprint = 'ffffffffffffffff' WHERE photo_id = 2")
+  g <- dd_analyze(s$con, s$cfg, quiet = TRUE)
+  expect_equal(nrow(g), 0L)
+  expect_equal(DBI::dbGetQuery(s$con, "SELECT COUNT(*) n FROM decisions")$n, 0L)
+})

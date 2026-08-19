@@ -202,6 +202,11 @@ Every stage is idempotent and re-runnable.
   is re-read from the library. A group's id is derived from its members, not
   from the order they happen to come out of the store, so decisions you have
   already recorded keep pointing at the same photos as the library grows.
+  A photo that ends up in *no* group — because you tightened
+  `hamming_threshold`, say — loses its decision and any move still only
+  planned, so dundee stops relocating photos it no longer calls duplicates.
+  That discards a manual choice too, since the group it described is gone;
+  moves already marked done are history and are kept.
 - The generated **move** script guards every command with `[ -e source ]` and
   uses `mv -n`, so an interrupted run can simply be repeated.
 
@@ -269,8 +274,45 @@ means starting a fresh work directory. A changed `library_root` is recoverable
 `rebase = TRUE` (`--rebase`) and every stored path is rewritten onto the new
 root. Do not use it to point a store at a different library.
 
-`hamming_threshold` is safe to change at any time — re-run analyze and grouping
-is recomputed from the stored fingerprints.
+### Editing config.yml afterwards
+
+`config.yml` is meant to be hand-edited. Every stage records the settings it ran
+under, and `dd_status()` compares them against the file, so after an edit it
+names what changed and what to re-run:
+
+```
+  config changed since analyze ran:
+    hamming_threshold: 5 -> 3
+  next: dd_run_analyze()   # config changed
+```
+
+| Edited key | Re-run |
+|---|---|
+| `extensions`, `cruft` | inventory |
+| `hamming_threshold`, `lsh_bands` | analyze |
+| `preference_rules`, `folder_priority` | see the caveat below |
+| `nas_root`, `preferred_root`, `nonpreferred_root` | plan |
+| `parallel`, `db_path`, `ssh_user`, `ssh_host` | nothing — no stored artifact depends on them |
+
+When more than one stage has drifted, `dd_status()` recommends the earliest,
+since re-running it carries the later ones with it.
+
+Two caveats it cannot fix for you:
+
+- **Narrowing `extensions` or widening `cruft`** leaves rows for files that are
+  no longer candidates. Re-running inventory picks up newly-eligible files but
+  never removes ineligible ones; only a fresh work directory does that.
+- **`preference_rules` and `folder_priority` do not re-apply to existing
+  decisions.** `dd_run_plan(bulk = TRUE)` skips every photo that already has a
+  decision, so the edited rules affect only photos decided afterwards. To apply
+  them to what is already decided, call
+  `dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)` directly — which also
+  discards any manual choices made in the review app.
+
+`hamming_threshold` is otherwise safe to change at any time — re-run analyze and
+grouping is recomputed from the stored fingerprints. Note that *tightening* it
+can dissolve a group, and photos left in no group at all lose their decisions
+(see Resumability).
 
 > On `lsh_bands`: the collision probability quoted in `config.example.yml` is the
 > standard bit-sampling LSH result, which assumes the differing bits are spread

@@ -63,6 +63,18 @@ if [ -n "$(find "$FX" -newer "$WORK/config.yml" -print -quit 2>/dev/null)" ]; th
   echo "FAIL: library was written to"; fail=1
 fi
 
+# An edit to config.yml must be noticed, attributed to the stage it invalidates,
+# and turned into the right next step.
+sed -i.bak 's/^db_path:/hamming_threshold: 3\ndb_path:/' "$WORK/config.yml"
+drift="$(./exec/dundee status "$WORK" 2>&1)"
+grep -q 'config changed since analyze ran' <<<"$drift" ||
+  { echo "FAIL: config drift not reported"; fail=1; }
+grep -q 'hamming_threshold: 5 -> 3' <<<"$drift" ||
+  { echo "FAIL: drift did not name the change"; fail=1; }
+grep -q 'next: dd_run_analyze()' <<<"$drift" ||
+  { echo "FAIL: drift did not redirect the next step"; fail=1; }
+mv "$WORK/config.yml.bak" "$WORK/config.yml"
+
 # The store must refuse a changed fingerprint geometry.
 sed -i.bak 's/^db_path:/fingerprint_grid: 16\ndb_path:/' "$WORK/config.yml"
 if ./exec/dundee analyze "$WORK" --quiet 2>/dev/null; then

@@ -51,6 +51,38 @@
   `vipsthumbnail` are reported as warnings rather than failures, since they are
   needed only by the move phase and the review app respectively.
 
+## dd_status() notices a config.yml edit
+
+* **Each stage now records the config keys it consumed**, and `dd_status()`
+  compares them against the file. `config.yml` is meant to be hand-edited, but
+  the next step was computed entirely from row counts: change
+  `hamming_threshold` from 5 to 3 and dundee still recommended
+  `dd_run_move(execute = TRUE)`, against groups built at 5. Status now reports
+  `config changed since analyze ran: hamming_threshold: 5 -> 3` and points at
+  `dd_run_analyze()`. With several stages drifted it names the earliest, since
+  re-running that one carries the rest. `dd_status()` still never applies the
+  config guard, so it keeps working when the config and store disagree; the
+  returned data frame gains a `drift` count.
+
+  Eight keys were previously unnoticed: `extensions`, `cruft`,
+  `hamming_threshold`, `lsh_bands`, `preference_rules`, `folder_priority`,
+  `nas_root`, and the two destination roots. `fingerprint_grid` and
+  `library_root` were already guarded, and remain errors rather than drift.
+
+  Editing `preference_rules` is reported but cannot be undone through
+  `dd_run_plan()`, which does not pass `overwrite` to
+  `dd_apply_bulk_decisions()`; status names that function instead of pretending
+  a bulk re-run would apply the new rules.
+
+* **Photos that stop being duplicates are no longer moved.** `dd_plan_moves()`
+  reads `decisions` and never consults `groups`, so a group dissolved by a
+  tightened `hamming_threshold` left its decision rows behind and dundee went on
+  relocating the photos. `dd_analyze()` now drops decisions, and any move still
+  only planned, for photos in no group at all. This discards a manual decision
+  as well when its photo leaves every group — the group the reviewer was
+  describing no longer exists. Moves already marked done are history and stay,
+  and a photo still in some group keeps its decision exactly as before.
+
 ## The launcher ships, and less of dundee is shell
 
 * **The command-line launcher installs with the package.** `run.sh` was in
