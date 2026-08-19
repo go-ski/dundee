@@ -36,7 +36,11 @@ ssh_user: tester
 ssh_host: nas.local
 YML
 
-./exec/dundee inventory "$WORK" --quiet
+# Keep inventory's stderr: the fingerprint workers write there, and a photo
+# with non-UTF-8 EXIF used to make their `sort` abort noisily.
+inv_err="$TOP/inventory.err"
+./exec/dundee inventory "$WORK" --quiet 2>"$inv_err"
+cat "$inv_err" >&2
 ./exec/dundee analyze   "$WORK" --quiet
 ./exec/dundee plan      "$WORK" --bulk --quiet
 ./exec/dundee status    "$WORK"
@@ -54,6 +58,20 @@ chk "$ngroups" 2 "group count"
 chk "$nmoves"  4 "planned move count"
 grep -q '/volume1/photo/_dedup/' "$WORK/moves.sh" || { echo "FAIL: dest not server-side"; fail=1; }
 grep -q "sub a/img1 dup.jpg" "$WORK/moves.sh" || { echo "FAIL: spaced path missing"; fail=1; }
+
+# Non-UTF-8 bytes in an EXIF tag must not derail the metadata hash. The worker
+# sorts exiftool's output before hashing it, and under a UTF-8 locale that sort
+# aborted on such bytes, storing the photo with meta_count 0 -- which inverts
+# the max_meta preference rule.
+if grep -q 'Illegal byte sequence' "$inv_err"; then
+  echo "FAIL: sort choked on non-UTF-8 metadata"; fail=1
+fi
+mc=$(sqlite3 "$db" "SELECT COALESCE(meta_count, -1) FROM photos
+                     WHERE rel_path = 'latin1-exif.jpg';")
+if [ -z "$mc" ] || [ "$mc" -le 0 ]; then
+  echo "FAIL: latin1-exif.jpg metadata not counted (meta_count=${mc:-<no row>})"
+  fail=1
+fi
 
 # Everything dundee wrote must be inside the work directory, and nothing at all
 # inside the read-only library.

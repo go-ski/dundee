@@ -4,6 +4,10 @@
 dd_pref_scorers <- list(
   max_pixels   = function(g) as.numeric(g$width) * as.numeric(g$height),
   max_filesize = function(g) as.numeric(g$size),
+  # meta_count is NULL/NA when the worker could not read the photo's metadata
+  # at all (as opposed to 0, meaning it read it and found none). order() keeps
+  # NA rows last while still letting the later rules break ties among them, so
+  # "unknown" ranks below "none" without suppressing the rest of the chain.
   max_meta     = function(g) as.numeric(g$meta_count),
   oldest_capture = function(g) {
     # Older capture preferred -> negate the numeric timestamp.

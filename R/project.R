@@ -608,9 +608,12 @@ dd_config_drift <- function(con, cfg) {
 #' stage records the config keys it consumed, and any that have since been
 #' edited in `config.yml` are listed along with the stage to re-run.
 #'
+#' Photos whose metadata could not be read at all are reported separately from
+#' photos that carry none, and counted in `unread`.
+#'
 #' @param config A work directory, config path, or config list.
-#' @return A one-row data frame of counts plus a `drift` count of changed
-#'   config keys, invisibly.
+#' @return A one-row data frame of counts, including `unread` (photos with no
+#'   readable metadata) and a `drift` count of changed config keys, invisibly.
 #' @export
 dd_status <- function(config = NULL) {
   cfg <- dd_config(config)
@@ -633,13 +636,22 @@ dd_status <- function(config = NULL) {
     grouped = n("SELECT COUNT(*) FROM groups"),
     decided = n("SELECT COUNT(*) FROM decisions"),
     planned = n("SELECT COUNT(*) FROM moves WHERE state = 'planned'"),
-    done    = n("SELECT COUNT(*) FROM moves WHERE state = 'done'")
+    done    = n("SELECT COUNT(*) FROM moves WHERE state = 'done'"),
+    # NULL, not 0: the fingerprint worker leaves meta_count empty when it could
+    # not read a photo's metadata at all, which is not the same as a photo that
+    # carries none. Only the former is worth reporting.
+    unread  = n("SELECT COUNT(*) FROM photos WHERE meta_count IS NULL")
   )
   message(sprintf(
     paste("  photos %d (%d unreadable) | groups %d covering %d |",
           "decided %d | moves %d planned, %d done"),
     out$photos, out$errors, out$groups, out$grouped, out$decided,
     out$planned, out$done))
+  if (out$unread > 0L) {
+    message(sprintf(
+      "  metadata unreadable for %d photo(s); max_meta cannot rank them",
+      out$unread))
+  }
 
   dr <- dd_config_drift(con, cfg)
   out$drift <- nrow(dr)

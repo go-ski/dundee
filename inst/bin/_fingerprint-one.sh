@@ -86,16 +86,30 @@ fi
 
 # Metadata hash: hash the sorted embedded-metadata lines (excluding volatile
 # filesystem fields); count is a cheap richness proxy for preference rules.
-meta_lines="$(exiftool -s -s -s -All --File:all --ExifTool:all "$T" 2>/dev/null | sort)" || meta_lines=""
-meta_hash="$(printf '%s' "$meta_lines" | dd_hash_stdin)"
-meta_count="$(printf '%s' "$meta_lines" | grep -c . || true)"
+#
+# LC_ALL=C is load-bearing twice over. A UTF-8 locale makes sort abort with
+# "Illegal byte sequence" the moment a tag carries Latin-1 or Shift-JIS bytes
+# (common in EXIF Artist/Model, which exiftool emits raw), and it also makes
+# the sort order -- and so the hash -- differ between machines. Byte order is
+# all a hash needs.
+if meta_lines="$(exiftool -s -s -s -All --File:all --ExifTool:all "$T" \
+                   2>/dev/null | LC_ALL=C sort)"; then
+  meta_hash="$(printf '%s' "$meta_lines" | dd_hash_stdin)"
+  meta_count="$(printf '%s' "$meta_lines" | grep -c . || true)"
+else
+  # Unreadable is not the same as absent. Empty fields arrive as SQL NULL, so
+  # a failure stays distinguishable from a photo that genuinely carries no
+  # tags -- exactly the distinction the old `|| meta_lines=""` destroyed.
+  meta_hash=""
+  meta_count=""
+fi
 capture="$(exiftool -s3 -DateTimeOriginal "$T" 2>/dev/null || true)"
 camera="$(exiftool -s3 -Model "$T" 2>/dev/null || true)"
 
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$b64src" "$b64rel" "$size" "$mtime" "$inode" "${loader:-}" \
   "${width:-}" "${height:-}" "$file_hash" "$pixel_hash" "$meta_hash" \
-  "$fingerprint" "$(dd_b64 "$capture")" "$(dd_b64 "$camera")" "${meta_count:-0}" \
+  "$fingerprint" "$(dd_b64 "$capture")" "$(dd_b64 "$camera")" "$meta_count" \
   >> "$stage"
 
 # One completion tick on stdout so the driver can count progress. A single

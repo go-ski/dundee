@@ -43,6 +43,11 @@ Only the decoded-pixel hash and the fingerprint determine group membership. The
 file hash and metadata hash are stored for inspection and provenance; the
 metadata *line count* feeds the `max_meta` preference rule.
 
+The metadata lines are sorted under `LC_ALL=C` before hashing. Byte order is
+the only order that is the same on every machine, and it is the only one that
+cannot fail: a UTF-8 collation makes `sort` abort on an EXIF tag holding
+Latin-1 or Shift-JIS bytes, which is common in `Artist` and `Model`.
+
 Analyze forms **exact** groups by decoded-pixel hash, then **near** groups by
 Hamming distance with LSH blocking (tunable threshold) over whatever is left —
 a photo already placed in an exact group is not considered for the near tier.
@@ -255,6 +260,10 @@ Everything else is tuning, not paths:
 - `preference_rules` — an ordered list applied as lexicographic tie-breakers
   (all rules, in sequence; `photo_id` breaks any remaining tie). One of
   `max_pixels`, `max_filesize`, `max_meta`, `oldest_capture`, `folder_priority`.
+  `max_meta` distinguishes a photo whose metadata could not be read (stored as
+  NULL, ranked last, and counted by `dd_status()`) from one that genuinely
+  carries none (stored as 0); ties among unreadable photos still fall through
+  to the remaining rules.
 - `folder_priority` — folders relative to `library_root`, most-preferred first;
   consulted only when `folder_priority` appears in `preference_rules`.
 - `nas_root` — the Synology server-side path the SMB mount corresponds to

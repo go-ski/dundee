@@ -11,6 +11,34 @@
   the bulk pass asks per photo rather than per group, and `dd_analyze()`
   re-points existing decisions at the group their photo is in now.
 
+* **Photo metadata survives non-UTF-8 bytes in an EXIF tag.** The fingerprint
+  worker sorts exiftool's output before hashing it, and macOS `sort` aborts
+  with `sort: Illegal byte sequence` when it reads from a *pipe* in a UTF-8
+  locale and any line holds bytes that are not valid UTF-8 -- which an EXIF
+  `Artist`, `Model` or `Copyright` written in Latin-1 or Shift-JIS does.
+  `pipefail` turned that into a failed pipeline and `|| meta_lines=""` swallowed
+  it, so the photo was stored with `meta_count` 0 and `meta_hash` set to the
+  digest of the empty string, the same value for every affected photo. Since
+  `max_meta` is third in the default `preference_rules`, a photo with a full set
+  of tags scored 0 and **lost to its metadata-poorer duplicate**. The sort now
+  runs under `LC_ALL=C`, which cannot fail on any byte sequence.
+
+  That also makes the metadata hash reproducible. Sort order is locale-dependent,
+  so the same photo hashed differently under `en_US.UTF-8` than under `C`; byte
+  order is all a hash needs and is the same on every machine.
+
+  Stores built by an earlier version still hold the zeroed rows. The resume
+  filter keys on `(path, size, mtime)`, so re-running inventory will not revisit
+  them; `UPDATE photos SET mtime = -1 WHERE meta_count = 0` before
+  `dd_run_inventory()` forces a re-fingerprint in place, keeping `photo_id` and
+  so leaving groups, decisions and moves intact.
+
+* **"No metadata" and "metadata unreadable" are no longer the same value.** A
+  failed read now leaves `meta_count` and `meta_hash` NULL rather than 0 and a
+  constant, `dd_status()` reports the count, and `max_meta` ranks an unknown
+  below a genuine 0 while still letting the later rules break ties among them.
+  This is what let the bug above go unnoticed.
+
 * **Non-ASCII filenames survive a non-UTF-8 locale.** `dd_b64dec()` left decoded
   paths marked `"unknown"`, so under `C`/`POSIX` they were stored escaped
   (`caf<c3><a9>-...`): the resume filter missed those files on every run and the
