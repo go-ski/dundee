@@ -33,18 +33,18 @@ dd_config_defaults <- function() {
     # SQLite store filename, always resolved under the work directory.
     db_path = "dundee.sqlite",
     # Number of parallel fingerprint workers.
-    parallel = 4L,
+    parallel = 8L,
     # File extensions to include.
     extensions = dd_default_extensions,
     # Names to prune during enumeration.
     cruft = dd_default_cruft,
     # Perceptual fingerprint geometry. dHash on a (grid x grid) grayscale image
     # yields grid*grid bits.
-    fingerprint_grid = 8L,
+    fingerprint_grid = 16L,
     # Default near-duplicate Hamming distance threshold (inclusive).
-    hamming_threshold = 5L,
+    hamming_threshold = 3L,
     # Number of LSH bands used to block near-duplicate candidates.
-    lsh_bands = 8L,
+    lsh_bands = 16L,
     # Ordered list of bulk preference rules. All of them are applied, in
     # sequence, as lexicographic tie-breakers; photo_id breaks any tie left
     # over. Supported: max_pixels, max_filesize, max_meta, oldest_capture,
