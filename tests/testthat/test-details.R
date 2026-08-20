@@ -45,11 +45,24 @@ make_photo <- function(s, name, ext = "jpg", tags = character(0)) {
                            WHERE path = ?", params = list(path))
 }
 
-test_that("one read yields metadata, a thumbnail and a viewer copy", {
+# Replace the cached metadata with a value the file itself cannot produce, so
+# the next call says where its answer came from: the sentinel survives only if
+# the cache was trusted. Asking that instead of "did read_at move" tests the
+# data the app receives -- and read_at is written by nothing that reads it.
+poison <- function(con) {
+  DBI::dbExecute(con, "UPDATE details SET tags = ?",
+                 params = list("model\tSENTINEL"))
+}
+
+test_that("one read yields metadata, coordinates, a thumbnail and a viewer copy", {
   need_tools()
   s <- detail_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   p <- make_photo(s, "a", tags = c("-Artist=Ann", "-Model=TestCam",
-                                   "-DateTimeOriginal=2019:07:04 10:00:00"))
+                                   "-DateTimeOriginal=2019:07:04 10:00:00",
+                                   "-GPSLatitude=36.0165055555556",
+                                   "-GPSLatitudeRef=N",
+                                   "-GPSLongitude=84.2612222222222",
+                                   "-GPSLongitudeRef=W"))
   skip_if(is.null(p), "vips could not write a fixture image")
 
   d <- dd_group_details(s$con, p, s$cfg)
@@ -64,40 +77,56 @@ test_that("one read yields metadata, a thumbnail and a viewer copy", {
   expect_true(file.exists(d$viewer))
   # The original is left in the cache, not in scratch.
   expect_length(list.files(s$cfg$temp_dir), 0L)
+
+  skip_if(is.na(d$gps_lat), "exiftool did not store GPS on this fixture")
+  # -n gives decimal degrees; the west longitude must come back negative or the
+  # map link would point at the wrong hemisphere.
+  expect_equal(round(as.numeric(d$gps_lat), 5), 36.01651)
+  expect_equal(round(as.numeric(d$gps_lon), 5), -84.26122)
+
+  # dd_member_table() takes the full stored row, as group_members() returns it.
+  full <- DBI::dbGetQuery(s$con,
+    "SELECT photo_id, rel_path, width, height, size, mtime, format, meta_count
+       FROM photos WHERE photo_id = ?", params = list(p$photo_id))
+  expect_equal(dd_member_table(full, d)$coords, "36.01651, -84.26122")
 })
 
-test_that("a second look re-reads nothing", {
+test_that("a cached row is trusted, and is what comes back", {
   need_tools()
   s <- detail_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
-  p <- make_photo(s, "b")
+  p <- make_photo(s, "b", tags = "-Model=TestCam")
   skip_if(is.null(p), "vips could not write a fixture image")
 
   dd_group_details(s$con, p, s$cfg)
-  first <- DBI::dbGetQuery(s$con, "SELECT read_at FROM details")$read_at
-  Sys.sleep(1.1)                       # read_at has one-second resolution
+  poison(s$con)
   d <- dd_group_details(s$con, p, s$cfg)
-  again <- DBI::dbGetQuery(s$con, "SELECT read_at FROM details")$read_at
 
-  expect_equal(again, first)
+  expect_equal(d$model, "SENTINEL")
   expect_false(is.na(d$viewer))
 })
 
-test_that("an original that changed is read again", {
+test_that("a changed original, or an older version, forces a re-read", {
   need_tools()
   s <- detail_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
-  p <- make_photo(s, "c")
+  p <- make_photo(s, "c", tags = "-Model=TestCam")
   skip_if(is.null(p), "vips could not write a fixture image")
 
   dd_group_details(s$con, p, s$cfg)
-  first <- DBI::dbGetQuery(s$con, "SELECT read_at FROM details")$read_at
-  Sys.sleep(1.1)
+
   # The store now disagrees with the cache about mtime, which is exactly what
   # an edited original looks like.
+  poison(s$con)
   p$mtime <- as.integer(p$mtime) + 1000L
-  dd_group_details(s$con, p, s$cfg)
-  again <- DBI::dbGetQuery(s$con, "SELECT read_at FROM details")$read_at
+  expect_equal(dd_group_details(s$con, p, s$cfg)$model, "TestCam")
 
-  expect_false(identical(again, first))
+  # Adding gps_lat to the fetched fields makes every older row decode it as NA,
+  # which is indistinguishable from a photo that has no location. The re-read
+  # above left the row fresh at the bumped mtime, so only the version is stale.
+  poison(s$con)
+  DBI::dbExecute(s$con, "UPDATE details SET version = version - 1")
+  expect_equal(dd_group_details(s$con, p, s$cfg)$model, "TestCam")
+  expect_equal(as.integer(DBI::dbGetQuery(s$con,
+                 "SELECT version FROM details")$version), dd_details_version)
 })
 
 test_that("an evicted viewer copy is refetched but the metadata is not", {
@@ -114,26 +143,20 @@ test_that("an evicted viewer copy is refetched but the metadata is not", {
   expect_equal(DBI::dbGetQuery(s$con, "SELECT COUNT(*) n FROM details")$n, 1L)
 })
 
-test_that("a TIFF becomes something a browser can actually display", {
+test_that("the viewer keeps a web format and converts what a browser cannot show", {
   need_tools()
   s <- detail_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
-  p <- make_photo(s, "e", ext = "tif")
-  skip_if(is.null(p), "vips could not write a fixture TIFF")
+  pj <- make_photo(s, "e")
+  pt <- make_photo(s, "f", ext = "tif")
+  skip_if(is.null(pj) || is.null(pt), "vips could not write the fixtures")
 
-  d <- dd_group_details(s$con, p, s$cfg)
-  expect_false(is.na(d$viewer))
-  expect_equal(dd_ext(d$viewer), "png")
-})
+  # One call for the pair, which is the shape dd_group_details() is built for.
+  d <- dd_group_details(s$con, rbind(pj, pt), s$cfg)
+  expect_equal(nrow(d), 2L)
 
-test_that("a JPEG reaches the viewer byte for byte", {
-  need_tools()
-  s <- detail_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
-  p <- make_photo(s, "f")
-  skip_if(is.null(p), "vips could not write a fixture image")
-
-  d <- dd_group_details(s$con, p, s$cfg)
-  n <- file.size(p$path)
-  expect_equal(readBin(d$viewer, "raw", n), readBin(p$path, "raw", n))
+  n <- file.size(pj$path)
+  expect_equal(readBin(d$viewer[1], "raw", n), readBin(pj$path, "raw", n))
+  expect_equal(dd_ext(d$viewer[2]), "png")
 })
 
 test_that("review_cache = 0 still yields metadata and a thumbnail", {
@@ -160,49 +183,6 @@ test_that("a missing original degrades instead of erroring", {
   expect_equal(nrow(d), 1L)
   expect_true(is.na(d$model))
   expect_true(is.na(d$viewer))
-})
-
-test_that("coordinates come back in decimal, ready for a map link", {
-  need_tools()
-  s <- detail_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
-  p <- make_photo(s, "i", tags = c("-GPSLatitude=36.0165055555556",
-                                   "-GPSLatitudeRef=N",
-                                   "-GPSLongitude=84.2612222222222",
-                                   "-GPSLongitudeRef=W"))
-  skip_if(is.null(p), "vips could not write a fixture image")
-
-  d <- dd_group_details(s$con, p, s$cfg)
-  skip_if(is.na(d$gps_lat), "exiftool did not store GPS on this fixture")
-  # -n gives decimal degrees; the west longitude must come back negative or the
-  # map link would point at the wrong hemisphere.
-  expect_equal(round(as.numeric(d$gps_lat), 5), 36.01651)
-  expect_equal(round(as.numeric(d$gps_lon), 5), -84.26122)
-
-  # dd_member_table() takes the full stored row, as group_members() returns it.
-  full <- DBI::dbGetQuery(s$con,
-    "SELECT photo_id, rel_path, width, height, size, mtime, format, meta_count
-       FROM photos WHERE photo_id = ?", params = list(p$photo_id))
-  tbl <- dd_member_table(full, d)
-  expect_equal(tbl$coords, "36.01651, -84.26122")
-})
-
-test_that("a row cached by an older version is re-read, not trusted", {
-  # Adding gps_lat to the fetched fields makes every older row decode it as NA,
-  # which is indistinguishable from a photo that has no location.
-  need_tools()
-  s <- detail_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
-  p <- make_photo(s, "j", tags = "-Model=TestCam")
-  skip_if(is.null(p), "vips could not write a fixture image")
-
-  dd_group_details(s$con, p, s$cfg)
-  first <- DBI::dbGetQuery(s$con, "SELECT read_at FROM details")$read_at
-  DBI::dbExecute(s$con, "UPDATE details SET version = version - 1")
-  Sys.sleep(1.1)
-  dd_group_details(s$con, p, s$cfg)
-
-  again <- DBI::dbGetQuery(s$con, "SELECT read_at, version FROM details")
-  expect_false(identical(again$read_at, first))
-  expect_equal(as.integer(again$version), dd_details_version)
 })
 
 test_that("the encoded cache round-trips, including awkward values", {
