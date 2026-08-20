@@ -19,22 +19,33 @@ dd_ensure_thumbs <- function(photos, cfg, size = 320L) {
   for (i in seq_len(nrow(photos))) {
     dest <- file.path(thumb_dir, paste0(photos$photo_id[i], ".jpg"))
     if (!file.exists(dest) && file.exists(photos$path[i])) {
-      # vipsthumbnail reads the original once and writes a small sRGB JPEG.
-      # system2 builds a shell command line without quoting, so shQuote each
-      # argument to keep spaces/awkward characters in filenames safe.
-      status <- tryCatch(
-        system2("vipsthumbnail",
-                c(shQuote(photos$path[i]), "--size", paste0(size, "x", size),
-                  "-o", shQuote(paste0(dest, "[Q=82]"))),
-                stdout = FALSE, stderr = FALSE),
-        error = function(e) 1L)
-      if (!identical(status, 0L)) dest <- NA_character_
+      dest <- dd_thumb_render(photos$path[i], dest, size = size)
     } else if (!file.exists(dest)) {
       dest <- NA_character_
     }
     out[i] <- dest
   }
   stats::setNames(out, photos$photo_id)
+}
+
+# Render one thumbnail, returning `dest` or NA on failure. `src` may be the
+# original on the library or a local copy of it -- dd_group_details() passes the
+# local copy so the library is read once for the thumbnail and the metadata
+# together, rather than once for each.
+dd_thumb_render <- function(src, dest, size = 320L) {
+  # vipsthumbnail writes a small sRGB JPEG. system2 builds a shell command line
+  # without quoting, so shQuote each argument to keep spaces and awkward
+  # characters in filenames safe.
+  status <- tryCatch(
+    system2("vipsthumbnail",
+            c(shQuote(src), "--size", paste0(size, "x", size),
+              "-o", shQuote(paste0(dest, "[Q=82]"))),
+            stdout = FALSE, stderr = FALSE),
+    error = function(e) 1L)
+  if (!identical(as.integer(status), 0L) || !file.exists(dest)) {
+    return(NA_character_)
+  }
+  dest
 }
 
 #' Thumbnails for all grouped photos (convenience wrapper around the store).

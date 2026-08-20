@@ -20,7 +20,8 @@ dd_pkg_version <- function() {
 
 # Derived, non-user-settable fields. Named here so the resolved snapshot can be
 # re-read without every one of them tripping the unknown-key warning.
-dd_derived_keys <- c("temp_dir", "staging_dir", "thumb_dir", "config_file")
+dd_derived_keys <- c("temp_dir", "staging_dir", "thumb_dir", "orig_dir",
+                     "config_file")
 
 # ---------------------------------------------------------------------------
 # path utilities
@@ -308,6 +309,8 @@ dd_validate <- function(cfg) {
   cfg$parallel         <- num("parallel", 1L, 256L)
   cfg$fingerprint_grid <- num("fingerprint_grid", 4L, 32L)
   cfg$lsh_bands        <- num("lsh_bands", 1L, 1024L)
+  # 0 disables the review app's original cache entirely (every view re-reads).
+  cfg$review_cache     <- num("review_cache", 0L, 100000L)
   bits <- cfg$fingerprint_grid^2
   cfg$hamming_threshold <- num("hamming_threshold", 0L,
                                if (is.na(bits)) 1024L else bits)
@@ -404,6 +407,7 @@ dd_config <- function(config = NULL, require_library = FALSE, create = TRUE) {
   cfg$temp_dir    <- file.path(cfg$work_dir, "tmp")
   cfg$staging_dir <- file.path(cfg$work_dir, "staging")
   cfg$thumb_dir   <- file.path(cfg$work_dir, "thumbs")
+  cfg$orig_dir    <- file.path(cfg$work_dir, "originals")
   cfg$config_file <- src$file
   cfg
 }
@@ -439,8 +443,9 @@ dd_config_snapshot <- function(cfg) {
   writeLines(c(
     sprintf("# dundee %s -- written %s. Do not edit; edit config.yml.",
             dd_pkg_version(), format(Sys.time())),
-    sprintf("# derived: db=%s tmp=%s staging=%s thumbs=%s",
-            cfg$db_path, cfg$temp_dir, cfg$staging_dir, cfg$thumb_dir),
+    sprintf("# derived: db=%s tmp=%s staging=%s thumbs=%s originals=%s",
+            cfg$db_path, cfg$temp_dir, cfg$staging_dir, cfg$thumb_dir,
+            cfg$orig_dir),
     yaml::as.yaml(body)
   ), out)
   invisible(out)

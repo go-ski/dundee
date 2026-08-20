@@ -69,6 +69,18 @@ preference_rules: [max_pixels, max_filesize, max_meta, oldest_capture]
 # when folder_priority appears in preference_rules above.
 folder_priority: []
 
+# --- review app -------------------------------------------------------------
+
+# How many full-size originals the review app keeps on local disk for its
+# side-by-side viewer. Each group you open is read once and everything --
+# metadata, thumbnail, viewer image -- comes from that read; these files are
+# what let the viewer open without going back to the library.
+#
+# Budget for it: 100 JPEGs is roughly 300 MB, but 100 TIFF or RAW copies can
+# approach 1 GB. Least-recently-used entries are dropped. 0 disables the
+# viewer's cache entirely; nothing else depends on it.
+review_cache: 100
+
 # --- phase 3: server-side moves --------------------------------------------
 # Only needed for `plan` and `move`. Inventory and analyze ignore these.
 

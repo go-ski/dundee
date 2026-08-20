@@ -51,9 +51,35 @@ Latin-1 or Shift-JIS bytes, which is common in `Artist` and `Model`.
 Analyze forms **exact** groups by decoded-pixel hash, then **near** groups by
 Hamming distance with LSH blocking (tunable threshold) over whatever is left —
 a photo already placed in an exact group is not considered for the near tier.
-The Shiny app shows each group's thumbnails + metadata and records the preferred
-copy. Move translates Mac SMB paths to Synology server-side paths and performs
+The Shiny app compares the copies in a group and records the preferred one.
+Move translates Mac SMB paths to Synology server-side paths and performs
 on-volume `mv` over SSH — marking first, moving second, deleting never.
+
+### Reviewing a group
+
+Opening a group reads each of its originals **once** and derives everything from
+that read — the thumbnail, the full metadata, and a full-size local copy for the
+comparison viewer. Nothing is added to the fingerprint pipeline, so none of this
+requires re-inventorying.
+
+The display is a *difference*, not a list of values: attributes every copy
+agrees on collapse into one `identical:` line, and only what differs is shown,
+with the better value marked where there is a defensible direction. It reports
+which preference rule actually decided the group and by what margin, and says so
+plainly when no rule separated them and the winner came from the `photo_id`
+tie-break.
+
+Location and capture date are the exception — they are shown under every
+thumbnail whether or not they differ, since they are what decisions turn on.
+The capture date is `DateTimeOriginal`, falling back to `CreateDate` with the
+fallback labelled. Coordinates are decimal, with a `[map]` link; that link is
+the only outbound request the app can make, and only if you click it.
+
+"Compare full size" opens a movable, resizable viewer with synchronised pan and
+zoom and an A/B flip for spotting compression differences. TIFF, HEIC and RAW
+are converted to a lossless PNG first, since no browser will display them;
+JPEG, PNG and the other web formats are served byte for byte, because judging
+compression artifacts against a re-encode would be judging the re-encode.
 
 ## Requirements
 
@@ -227,6 +253,7 @@ Every stage is idempotent and re-runnable.
   staging/              per-worker fingerprint shards
   tmp/                  fingerprint worker scratch space
   thumbs/               review-app thumbnail cache
+  originals/            review-app full-size cache (bounded by review_cache)
   moves.tsv  moves.sh   Phase 3 plan
 ```
 
@@ -266,6 +293,11 @@ Everything else is tuning, not paths:
   to the remaining rules.
 - `folder_priority` — folders relative to `library_root`, most-preferred first;
   consulted only when `folder_priority` appears in `preference_rules`.
+- `review_cache` — how many full-size originals the review app keeps in
+  `originals/` for its comparison viewer, least-recently-used evicted first
+  (default 100). Budget for it: 100 JPEGs is roughly 300 MB, but 100 TIFF or RAW
+  copies can approach 1 GB. `0` disables the viewer's cache; nothing else
+  depends on it, and `dd_cache_clear()` empties it at any time.
 - `nas_root` — the Synology server-side path the SMB mount corresponds to
   (e.g. `~/photo-ro` ↔ `/volume1/photo`).
 - `preferred_root` / `nonpreferred_root` — server-side output trees.

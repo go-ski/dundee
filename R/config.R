@@ -54,6 +54,11 @@ dd_config_defaults <- function() {
     # Folders (relative to library_root) that win when folder_priority is used,
     # most-preferred first.
     folder_priority = character(0),
+    # How many originals the review app keeps cached locally for its comparison
+    # viewer. Bounded because these are full-size files: ~300 MB for 100 JPEGs,
+    # but approaching 1 GB for 100 TIFF or RAW derivatives. Evicted
+    # least-recently-used; nothing else depends on it, so it is safe to lower.
+    review_cache = 100L,
     # Phase 3: SSH target and path translation.
     ssh_host = NULL,
     ssh_user = NULL,

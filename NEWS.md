@@ -79,6 +79,65 @@
   `vipsthumbnail` are reported as warnings rather than failures, since they are
   needed only by the move phase and the review app respectively.
 
+## The review app answers the question being asked
+
+* **The group display is a difference, not a list of values.** It showed
+  `rel_path`, a vips loader name, `WxH`, raw bytes, `meta:N` and capture time
+  side by side, leaving the reviewer to diff them by eye. On the reference store
+  that is close to useless: 24 of 30 groups agree on *every* displayed field and
+  differ in exactly one that was not displayed at all. Attributes the copies
+  share now collapse into one `identical:` line and only the differences are
+  shown, with the better value marked where there is a defensible direction.
+
+* **It says which rule decided the group, and admits when none did.** With
+  width, height, size, meta and capture all tied, every preference rule falls
+  through to the `photo_id` tie-break -- 80% of groups in the reference store.
+  The app presented that as a decision. It now reports the deciding rule and its
+  margin, and warns plainly when the winner was arbitrary. Margins too small to
+  render distinctly say what the gap was, so `2.6 MB vs 2.6 MB` reads
+  `2.6 MB vs 2.6 MB, larger by 1.3 kB`.
+
+* **Image quality, location and the rest are read on demand.** The store keeps
+  only `capture_time` and `camera`; everything else the fingerprint worker sees
+  is hashed into `meta_hash` and discarded, and there is no GPS column at all.
+  Rather than re-fingerprint a library to add columns, opening a group now reads
+  its originals -- once each -- and derives the thumbnail, the full metadata and
+  a full-size local copy from that single read. This is the same discipline
+  `_fingerprint-one.sh` already applied, and it costs no more library reads than
+  the thumbnail alone used to.
+
+  It surfaces what actually separates two copies: `JPEGQualityEstimate`,
+  chroma subsampling, bytes per pixel, ICC profile, and whether the camera's
+  maker notes survived. In the reference store's one near pair that is 95 vs 80,
+  4:2:2 vs 4:2:0, and maker notes present vs stripped -- a camera original
+  against a re-export, none of which was visible before. Worth knowing:
+  `max_meta` scores the re-export *higher*, because the 40-tag gap it counts is
+  an embedded ICC profile.
+
+* **Location and capture date are always on screen**, under every thumbnail,
+  whether or not the copies differ, because they are what decisions turn on.
+  Coordinates are decimal with a `[map]` link -- the only outbound request the
+  app can make, and only when clicked. The date is `DateTimeOriginal` falling
+  back to `CreateDate`, with the fallback labelled; a quarter of the reference
+  library carries no `DateTimeOriginal`.
+
+* **A full-size comparison viewer**, movable and resizable, with synchronised
+  pan and zoom and an A/B flip for spotting compression differences. It opens
+  instantly because the bytes are already local. TIFF, HEIC and RAW are
+  converted to lossless PNG, since no browser renders them; web formats are
+  served byte for byte, because judging artifacts against a re-encode would be
+  judging the re-encode. The cache is bounded by the new `review_cache` setting
+  (default 100, least-recently-used evicted); `dd_cache_clear()` empties it.
+
+* **The group picker is a list, not a dropdown**, filling the sidebar and
+  scrolling, with the current group highlighted and scrolled into view. It is
+  rendered once and the highlight moved on the client, so selecting a group does
+  not rebuild the list.
+
+* New `details` table caching what each read yielded. It is derived data only:
+  when the set of fields read changes it is dropped and refills on demand, which
+  is why a row cannot silently report "no location" for a photo that has one.
+
 ## dd_status() notices a config.yml edit
 
 * **Each stage now records the config keys it consumed**, and `dd_status()`
