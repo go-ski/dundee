@@ -98,6 +98,22 @@ dd_paths_overlap <- function(a, b) {
     startsWith(paste0(b, "/"), paste0(a, "/"))
 }
 
+# The directional half of the same question: is `child` at or below `parent`?
+# dd_paths_overlap() answers "does either contain the other", which is what
+# work_dir vs library_root needs; the phase 3 destination roots need the
+# asymmetric form, and need the same case folding -- on an SMB or APFS mount
+# /Volumes/Photo and /Volumes/photo are one directory, so a plain startsWith()
+# would reject a destination that is genuinely inside the library.
+dd_path_under <- function(child, parent) {
+  if (is.null(child) || is.null(parent) || !length(child) || !length(parent) ||
+      !nzchar(child) || !nzchar(parent)) return(FALSE)
+  if (dd_fs_case_insensitive(child) || dd_fs_case_insensitive(parent)) {
+    child <- tolower(child); parent <- tolower(parent)
+  }
+  identical(child, parent) ||
+    startsWith(paste0(child, "/"), paste0(parent, "/"))
+}
+
 # ---------------------------------------------------------------------------
 # which project am I working on?
 # ---------------------------------------------------------------------------
@@ -159,7 +175,7 @@ dd_work_dir <- function(work_dir = NULL) {
 #' @param work_dir Directory to create/use. Everything dundee writes for this
 #'   library lives here.
 #' @param library_root Read-only root of the photo library.
-#' @param ... Further scalar config fields, e.g. `ssh_host = "nas.local"`.
+#' @param ... Further scalar config fields, e.g. `parallel = 4`.
 #' @param overwrite Replace an existing `config.yml`, archiving the previous
 #'   version to `config.history/` first. Without it an existing config is left
 #'   untouched and nothing is archived.
@@ -392,6 +408,12 @@ dd_config <- function(config = NULL, require_library = FALSE, create = TRUE) {
     }
   }
   cfg$library_root <- dd_resolve_path(cfg$library_root)
+  # Phase 3 destinations are local paths now, so they need the same treatment:
+  # ~ expanded and symlinks resolved, or the containment check in
+  # dd_require_move_config() would compare an unexpanded string against a real
+  # path and reject a destination that is in fact inside the library.
+  cfg$preferred_root <- dd_resolve_path(cfg$preferred_root)
+  cfg$nonpreferred_root <- dd_resolve_path(cfg$nonpreferred_root)
 
   if (dd_paths_overlap(cfg$library_root, cfg$work_dir)) {
     stop("config: work_dir must not be the same as, nested inside, or ",
@@ -507,7 +529,7 @@ dd_config_guard <- function(con, cfg, rebase = FALSE) {
   if (moved) {
     # Recording the new root is not enough: every stored path is absolute under
     # the old one, so without rewriting them the resume filter matches nothing
-    # and dd_translate_path() rejects every row as "not under library_root".
+    # and the move plan would name sources that are no longer there.
     n <- dd_rebase_paths(con, root, cfg$library_root)
     message(sprintf("dundee: rebased %d stored path(s)\n    %s\n  ->  %s",
                     n, root, cfg$library_root))
@@ -525,14 +547,13 @@ dd_config_guard <- function(con, cfg, rebase = FALSE) {
 # ---------------------------------------------------------------------------
 
 # Config keys each stage consumes. Editing one of these invalidates what that
-# stage wrote; editing anything else (parallel, ssh_*, db_path) does not. In
-# pipeline order, which is also the order drift is reported and resolved.
+# stage wrote; editing anything else (parallel, review_cache, db_path) does not.
+# In pipeline order, which is also the order drift is reported and resolved.
 dd_stage_keys <- list(
   inventory = c("library_root", "extensions", "cruft", "fingerprint_grid"),
   analyze   = c("fingerprint_grid", "hamming_threshold", "lsh_bands"),
   decide    = c("preference_rules", "folder_priority"),
-  plan      = c("library_root", "nas_root", "preferred_root",
-                "nonpreferred_root")
+  plan      = c("library_root", "preferred_root", "nonpreferred_root")
 )
 
 # What to re-run for each stage. `decide` names dd_apply_bulk_decisions()
@@ -664,7 +685,7 @@ dd_status <- function(config = NULL) {
     if (out$groups == 0L) "dd_run_analyze()" else
       if (out$decided < out$grouped) "dd_app()  # review remaining groups" else
         if (out$planned == 0L && out$done == 0L) "dd_run_plan(bulk = TRUE)" else
-          if (out$planned > 0L) "dd_run_move(execute = TRUE)" else "nothing"
+          if (out$planned > 0L) "run moves.sh, then dd_run_move()" else "nothing"
 
   if (nrow(dr)) {
     # Report the earliest drifted stage first, and recommend it: re-running a

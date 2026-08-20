@@ -37,7 +37,7 @@ extensions: [jpg, jpeg, jpe, png, gif, bmp, tif, tiff, webp,
 # Directory and file names pruned during enumeration (Synology + macOS junk).
 cruft: ['@eaDir', '#recycle', '#snapshot', '@tmp', .@__thumb, '@sharebin',
         .DS_Store, Thumbs.db, .Spotlight-V100, .TemporaryItems,
-        .Trashes, .fseventsd]
+        .Trashes, .fseventsd, _dedup]
 
 # --- near-duplicate tuning -------------------------------------------------
 
@@ -86,17 +86,21 @@ folder_priority: []
 # viewer's cache entirely; nothing else depends on it.
 review_cache: 100
 
-# --- phase 3: server-side moves --------------------------------------------
+# --- phase 3: the move ------------------------------------------------------
 # Only needed for `plan` and `move`. Inventory and analyze ignore these.
-
-ssh_user: admin
-ssh_host: nas.local
-
-# The server-side path that library_root is mounted from, e.g. the Mac sees
-# ~/photo-ro where the NAS sees /volume1/photo.
-nas_root: /volume1/photo
-
-# Server-side destination trees. Relative paths from library_root are
-# preserved under each. dundee only ever moves; it never deletes.
-preferred_root: /volume1/photo/_dedup/preferred
-nonpreferred_root: /volume1/photo/_dedup/non-preferred
+#
+# dundee never moves anything itself. `plan` writes moves.sh into the work
+# directory; you remount the library read-write, run it, and then `move`
+# reconciles the store against what actually happened.
+#
+# Both roots MUST be under library_root. A move within one mount is a rename --
+# instant, and no bytes cross the wire however large the photos. A move to
+# another volume would copy every duplicate down and delete the original.
+# Relative paths from library_root are preserved under each. dundee only ever
+# moves; it never deletes.
+#
+# Note the `_dedup` entry in `cruft` above: these trees live inside the
+# enumerated library, so without pruning them the next inventory would walk
+# them and file every moved photo as a new one.
+preferred_root: ~/photo-ro/_dedup/preferred
+nonpreferred_root: ~/photo-ro/_dedup/non-preferred

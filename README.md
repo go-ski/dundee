@@ -15,7 +15,7 @@ works with this list to produce duplicate groups using smart cluster analysis te
 
 ## **move**
 
-moves the preferred and non-preferred copies into separate folders that can later be moved elsewhere or deleted
+writes a shell script that moves the preferred and non-preferred copies into separate folders — inside the library, so each move is a rename rather than a copy — which you review and run yourself. dundee never touches the library; it reads back afterwards what actually happened. The two folders can later be moved elsewhere or deleted
 
 ---
 
@@ -23,7 +23,7 @@ moves the preferred and non-preferred copies into separate folders that can late
 
 Built in **R and POSIX/bash only** (no Python). Heavy lifting is done by
 purpose-built CLI tools driven from shell — `vips`/`vipsheader`/`vipsthumbnail`,
-`exiftool`, `b3sum`, `find`/`stat`/`awk`/`xargs`, `ssh` — with R
+`exiftool`, `b3sum`, `find`/`stat`/`awk`/`xargs` — with R
 (an installable package) for assembly, clustering, the review UI, and move
 planning. The single source of truth is a **SQLite** store inside the work
 directory.
@@ -52,8 +52,9 @@ Analyze forms **exact** groups by decoded-pixel hash, then **near** groups by
 Hamming distance with LSH blocking (tunable threshold) over whatever is left —
 a photo already placed in an exact group is not considered for the near tier.
 The Shiny app compares the copies in a group and records the preferred one.
-Move translates Mac SMB paths to Synology server-side paths and performs
-on-volume `mv` over SSH — marking first, moving second, deleting never.
+Move writes a shell script of guarded `mv` commands and stops there; you review
+it, remount the library read-write and run it, and `dundee move` reads back what
+happened — marking first, moving second, deleting never.
 
 ### Reviewing a group
 
@@ -84,7 +85,7 @@ compression artifacts against a re-encode would be judging the re-encode.
 ## Requirements
 
 ```sh
-brew install vips exiftool b3sum     # ssh ships with macOS
+brew install vips exiftool b3sum
 ```
 
 `b3sum` is optional: if it is absent, `shasum -a 256` is used for every hash
@@ -103,9 +104,10 @@ can put it on your PATH and drop the `./` prefix used below:
 ln -s "$(Rscript -e 'cat(system.file("exec", "dundee", package = "dundee"))')" ~/bin/dundee
 ```
 
-`dd_preflight()` fails only on tools every run needs. `ssh` (Phase 3) and
-`vipsthumbnail` (the review app) are reported as warnings, so a machine that can
-run inventory and analyze reports `preflight: ready.`
+`dd_preflight()` fails only on tools every run needs. `vipsthumbnail` (the
+review app) is reported as a warning, so a machine that can run inventory and
+analyze reports `preflight: ready.` Phase 3 needs no tool at all: the move is a
+shell script you run.
 
 > `exec/dundee` prefers an **installed** dundee over the source tree it sits in.
 > When you are changing the package, either re-run `R CMD INSTALL .` or point
@@ -121,6 +123,20 @@ Mount the shared Synology photos directory read-only at `photo-ro`:
 mkdir "$HOME/photo-ro"
 mount_smbfs -o rdonly "//<username>@<yourphotoserver>.local/photos" "$HOME/photo-ro"
 ```
+
+Inventory, analyze and review all run against that read-only mount, and dundee
+writes nothing outside its own work directory. Phase 3 is the one point where
+the library has to change, and dundee still does not do it: it hands you
+`moves.sh`. Remount read-write when you are ready to run it —
+
+```sh
+umount "$HOME/photo-ro"
+mount_smbfs "//<username>@<yourphotoserver>.local/photos" "$HOME/photo-ro"
+```
+
+— and remount read-only again once `dundee move` has reconciled the store. The
+script refuses to run against a read-only mount, so there is no way to half-do
+this; `--dry-run` works either way.
 
 ## Quick start
 
@@ -163,10 +179,12 @@ dd_run_inventory()
 dd_run_analyze()
 dd_app()                             # opens the Shiny review app
 
-# Phase 3 — plan (dry run), review the script, then execute server-side
-dd_run_plan(bulk = TRUE)
-dd_run_move()                        # dry run
-dd_run_move(execute = TRUE)
+# Phase 3 — write the move script, run it yourself, then reconcile
+dd_run_plan(bulk = TRUE)             # writes moves.tsv + moves.sh
+# ... review moves.sh, remount the library read-write, and:
+#       bash <work_dir>/moves.sh --dry-run
+#       bash <work_dir>/moves.sh
+dd_run_move()                        # reads back what actually moved
 ```
 
 Every stage takes an optional first argument naming the project: a work
@@ -199,10 +217,11 @@ checkout; installed and symlinked (see Requirements) it is just `dundee`:
 ./exec/dundee analyze ~/dundee/family-photos [--quiet]
 ./exec/dundee app     ~/dundee/family-photos [--port=N] [--no-browser]
 
-# Phase 3 — plan (dry run), review the script, then execute server-side
+# Phase 3 — write the move script, run it yourself, then reconcile
 ./exec/dundee plan ~/dundee/family-photos --bulk   # writes moves.tsv + moves.sh
-./exec/dundee move ~/dundee/family-photos          # DRY RUN: prints what would run
-./exec/dundee move ~/dundee/family-photos --execute
+bash ~/dundee/family-photos/moves.sh --dry-run     # rehearse; touches nothing
+bash ~/dundee/family-photos/moves.sh               # perform the moves
+./exec/dundee move ~/dundee/family-photos          # reconcile the store
 ```
 
 The positional argument is a work directory. With none, dundee resolves, in
@@ -238,8 +257,11 @@ Every stage is idempotent and re-runnable.
   planned, so dundee stops relocating photos it no longer calls duplicates.
   That discards a manual choice too, since the group it described is gone;
   moves already marked done are history and are kept.
-- The generated **move** script guards every command with `[ -e source ]` and
-  uses `mv -n`, so an interrupted run can simply be repeated.
+- The generated **move** script guards every move with `[ -e source ]` and uses
+  `mv -n`, so an interrupted run can simply be repeated. It refuses to start
+  unless the library is mounted, non-empty and writable, and it records one
+  failure without abandoning the rest of the batch. dundee itself never writes
+  to the library at any phase, including this one.
 
 ## What lives where
 
@@ -254,7 +276,9 @@ Every stage is idempotent and re-runnable.
   tmp/                  fingerprint worker scratch space
   thumbs/               review-app thumbnail cache
   originals/            review-app full-size cache (bounded by review_cache)
-  moves.tsv  moves.sh   Phase 3 plan
+  moves.tsv  moves.sh   Phase 3 plan, and the script you run
+  moves.done.tsv        what the script moved; read by `move` (with
+  moves.failed.tsv      anything that failed, and why)
 ```
 
 ## Key configuration
@@ -298,13 +322,17 @@ Everything else is tuning, not paths:
   (default 100). Budget for it: 100 JPEGs is roughly 300 MB, but 100 TIFF or RAW
   copies can approach 1 GB. `0` disables the viewer's cache; nothing else
   depends on it, and `dd_cache_clear()` empties it at any time.
-- `nas_root` — the Synology server-side path the SMB mount corresponds to
-  (e.g. `~/photo-ro` ↔ `/volume1/photo`).
-- `preferred_root` / `nonpreferred_root` — server-side output trees.
-- `ssh_user` / `ssh_host` — SSH target for server-side moves.
+- `preferred_root` / `nonpreferred_root` — the two output trees. **Both must be
+  under `library_root`**, and `plan` refuses otherwise: a move within one mount
+  is a rename, instant and with no bytes crossing the wire, while a move to
+  another volume copies every duplicate down and deletes the original. Relative
+  paths from `library_root` are preserved under each.
 
-Those last five (`nas_root`, `preferred_root`, `nonpreferred_root`, `ssh_user`,
-`ssh_host`) are needed only for `plan` and `move`; inventory and analyze ignore
+  Because they sit inside the enumerated library, name the directory holding
+  them in `cruft` (the template ships `_dedup`) or the next inventory will walk
+  the moved copies and file them as new photos. `plan` warns if you haven't.
+
+These two are needed only for `plan` and `move`; inventory and analyze ignore
 them.
 
 Two values are frozen by the store on first use and are errors to change
@@ -332,8 +360,8 @@ names what changed and what to re-run:
 | `extensions`, `cruft` | inventory |
 | `hamming_threshold`, `lsh_bands` | analyze |
 | `preference_rules`, `folder_priority` | see the caveat below |
-| `nas_root`, `preferred_root`, `nonpreferred_root` | plan |
-| `parallel`, `db_path`, `ssh_user`, `ssh_host` | nothing — no stored artifact depends on them |
+| `preferred_root`, `nonpreferred_root` | plan |
+| `parallel`, `db_path`, `review_cache` | nothing — no stored artifact depends on them |
 
 When more than one stage has drifted, `dd_status()` recommends the earliest,
 since re-running it carries the later ones with it.

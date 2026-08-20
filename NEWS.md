@@ -1,5 +1,54 @@
 # dundee 0.1.0
 
+## dundee 0.1.0 Phase 3 is a script you run
+
+* **dundee no longer moves anything, and no longer logs in anywhere.**
+  `dd_run_move()` used to stream the generated script to the NAS
+  (`ssh user@host 'bash -s' < moves.sh`) after a mock run that only R could
+  perform. Both are gone. `dd_run_plan()` writes `moves.sh` and stops; you
+  review it, remount the library read-write, and run it. The rehearsal moved
+  into the script as `--dry-run`, where it can see the real mount and tell you
+  the library is still read-only -- something the R preview never could.
+
+* **Moves are local, so the server side is gone with it.** The store already
+  holds each photo's path on the mounted library, so there is nothing to
+  translate: `dd_translate_path()` (exported -- **this is an API break**) and
+  the `nas_root`, `ssh_user` and `ssh_host` config keys have all been removed.
+  An existing `config.yml` carrying them will warn about unknown keys until they
+  are deleted; nothing else breaks.
+
+* **`preferred_root` and `nonpreferred_root` now mean local paths, and must be
+  under `library_root`.** `plan` refuses otherwise. A move within one mount is a
+  rename -- instant, no bytes over the wire -- while a move to another volume
+  would copy every duplicate down and delete the original. The check also
+  catches the unmigrated config: `/volume1/photo/_dedup/preferred` on the Mac is
+  not a slower destination but a nonexistent one. Because the trees now live
+  inside the enumerated library, `plan` warns when no component of them appears
+  in `cruft`, since the next inventory would otherwise file every moved photo as
+  a new one. The shipped template prunes `_dedup`.
+
+* **The script reports what it did, and `move` reads it back.** `moves.sh`
+  appends every completed move to `moves.done.tsv` beside itself, and failures
+  to `moves.failed.tsv` with the reason. `dd_run_move()` credits the receipt,
+  then checks the library itself for any planned photo the receipt does not
+  cover -- so an edited, interrupted or hand-written script still reconciles. A
+  source that has vanished with nothing at the destination is reported and left
+  planned rather than called done.
+
+* **One failure no longer abandons the batch.** Each move runs through a
+  `do_move` helper that captures the error, records it and carries on. When ssh
+  streamed the whole thing with nobody watching, stopping at the first error was
+  right; run by hand against a real library, one unwritable file must not strand
+  the other four hundred. The script also refuses to start unless
+  the library is mounted, non-empty and writable -- an empty mount point means
+  the share is not mounted, and moving into it would scatter the library across
+  the local disk.
+
+* Phase 3 is testable for the first time: with no server side and no `ssh` to
+  stub, `tests/testthat/test-move.R` runs the generated script against a temp
+  library, and `tests/e2e.sh` now carries the fixture library through the move
+  and the reconcile.
+
 ## dundee 0.1.0 Correctness fixes
 
 * **The review app crashed on every group.** `inst/shiny/app.R` called

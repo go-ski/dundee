@@ -23,7 +23,7 @@ test_that("options are rejected per command, not globally", {
   # global allow-list this validated cleanly and was then dropped on the floor.
   expect_error(dd_parse_args(c("status", "~/w", "--bulk")),
                "status does not accept")
-  expect_error(dd_parse_args(c("analyze", "--execute")),
+  expect_error(dd_parse_args(c("analyze", "--rebase")),
                "analyze does not accept")
   expect_error(dd_parse_args(c("inventory", "--quiot")), "does not accept")
   expect_no_error(dd_parse_args(c("plan", "~/w", "--bulk", "--quiet")))

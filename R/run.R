@@ -74,8 +74,7 @@ dd_pf_required <- c(
 # Needed by one phase only. Worth saying, but a machine that can run inventory
 # and analyze must not be told it is missing requirements.
 dd_pf_optional <- c(
-  vipsthumbnail = "part of libvips; needed only by the review app",
-  ssh           = "needed only by phase 3 (move)"
+  vipsthumbnail = "part of libvips; needed only by the review app"
 )
 
 # Report whether vips can decode HEIC/HEIF. Informational: a library with no
@@ -102,8 +101,8 @@ dd_pf_heif <- function() {
 #'
 #' Verifies the command-line tools the shell stages need and the R packages
 #' dundee needs at run time, in one report. Tools that only one phase needs --
-#' `ssh` for the move phase, `vipsthumbnail` and shiny/bslib for the review app
-#' -- are reported as warnings and do not make the check fail.
+#' `vipsthumbnail` and shiny/bslib for the review app -- are reported as
+#' warnings and do not make the check fail.
 #'
 #' @param quiet Logical; suppress the per-tool report. Missing requirements are
 #'   still reported.
@@ -339,7 +338,8 @@ dd_app <- function(config = NULL, port = 7654L,
 #'
 #' Optionally applies the bulk preference rules to any still-undecided group,
 #' then writes `moves.tsv` and a reviewable `moves.sh` under `work_dir`.
-#' Nothing is executed and nothing is written on the server.
+#' Nothing is executed and nothing in the library is touched: running the
+#' script is yours to do, and [dd_run_move()] reconciles the store afterwards.
 #'
 #' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param bulk Logical; apply [dd_apply_bulk_decisions()] before planning.
@@ -372,89 +372,105 @@ dd_run_plan <- function(config = NULL, bulk = FALSE, quiet = FALSE) {
   invisible(out)
 }
 
-# Stream the generated move script to the server. `stdin = script` hands ssh the
-# file itself, so the UTF-8 bytes dd_plan_moves() wrote with useBytes = TRUE
-# arrive verbatim; reading the script into R and piping it would re-encode to
-# native and mangle non-ASCII filenames under a C locale.
-dd_ssh_moves <- function(script, target) {
-  status <- system2("ssh", c(shQuote(target), shQuote("bash -s")),
-                    stdin = script)
-  if (!identical(as.integer(status), 0L)) {
-    stop(sprintf("dundee: ssh %s exited with status %s", target, status),
-         call. = FALSE)
-  }
-  invisible(TRUE)
+# Read the receipt the move script appends to as it runs. Only field 1, the
+# photo_id, is taken: a filename may legally contain a tab, and the id-first
+# layout means the parse never has to care. read.table() is the wrong tool here
+# -- its quote and comment.char defaults mangle real paths -- so this reads
+# bytes and splits them.
+dd_move_receipt <- function(path) {
+  if (!file.exists(path)) return(integer(0))
+  lines <- readLines(path, warn = FALSE, encoding = "UTF-8")
+  lines <- lines[nzchar(lines)]
+  if (!length(lines)) return(integer(0))
+  ids <- suppressWarnings(as.integer(
+    vapply(strsplit(lines, "\t", fixed = TRUE), `[`, character(1), 1L)))
+  unique(ids[!is.na(ids)])
 }
 
-# Dry run: describe what --execute would stream, and show the head of it.
-# encoding= only marks the strings (the file is UTF-8 whatever the locale) and
-# useBytes= writes those bytes back out unconverted, so the preview shows real
-# filenames rather than escapes under LC_ALL=C.
-dd_move_preview <- function(script, target, quiet = FALSE) {
-  lines <- readLines(script, warn = FALSE, encoding = "UTF-8")
-  n <- sum(grepl("^if ", lines))
-  message(sprintf("DRY RUN. Would stream %d move command(s) to: ssh %s bash -s",
-                  n, target))
-  message("Pass execute = TRUE (--execute) to perform the moves.")
-  if (!quiet) {
-    writeLines(sprintf("---- %s ----", script), useBytes = TRUE)
-    writeLines(utils::head(lines, 20L), useBytes = TRUE)
-    if (length(lines) > 20L) writeLines("...")
-  }
-  invisible(n)
-}
-
-#' Execute the planned moves server-side over SSH.
+#' Reconcile the store with the moves the script actually made.
 #'
-#' Dry run by default: prints what would be streamed to the server. Pass
-#' `execute = TRUE` to perform the on-volume renames. The generated script is
-#' idempotent, so an interrupted run can simply be repeated.
+#' dundee does not move anything: [dd_run_plan()] writes `moves.sh` and you run
+#' it. This reads what happened and marks the batch done -- first from
+#' `moves.done.tsv`, the receipt the script appends to, then by checking the
+#' library itself for any planned photo the receipt does not cover, so a script
+#' you edited, interrupted or replaced with your own still reconciles.
+#'
+#' A photo counts as moved when its source is gone *and* its destination is
+#' there. A source that has vanished with nothing at the destination is
+#' reported and left planned: something other than the move script removed it,
+#' and calling that done would hide it.
 #'
 #' @param config A work directory, a config path, or a list from [dd_config()].
-#' @param execute Logical; perform the moves instead of describing them.
-#' @param quiet Logical; suppress the phase banner and the script's output.
-#' @return `TRUE`, invisibly.
+#' @param quiet Logical; suppress the phase banner.
+#' @return The number of moves marked done, invisibly.
 #' @examples
 #' \dontrun{
-#' dd_run_move("config.yml")                  # dry run
-#' dd_run_move("config.yml", execute = TRUE)  # for real
+#' dd_run_plan(bulk = TRUE)   # writes moves.sh
+#' # ... remount the library read-write and run moves.sh ...
+#' dd_run_move()
 #' }
 #' @export
-dd_run_move <- function(config = NULL, execute = FALSE, quiet = FALSE) {
+dd_run_move <- function(config = NULL, quiet = FALSE) {
   cfg <- dd_as_config(config)
   dd_require_move_config(cfg)
   dd_config_snapshot(cfg)                      # <- provenance
   dd_phase("move", quiet = quiet)
+
   script <- file.path(cfg$work_dir, "moves.sh")
   if (!file.exists(script)) {
     stop("dundee: no move script at ", script,
          ". Run dd_run_plan() first.", call. = FALSE)
   }
-  target <- paste0(cfg$ssh_user, "@", cfg$ssh_host)
-  if (!isTRUE(execute)) {
-    dd_move_preview(script, target, quiet = quiet)
-    return(invisible(TRUE))
-  }
-  message("executing moves server-side on ", target, " ...")
-  dd_ssh_moves(script, target)
-  message("server-side moves complete.")
+  receipt <- file.path(cfg$work_dir, "moves.done.tsv")
 
-  # The script runs under `set -euo pipefail`, so reaching here means every
-  # command in it succeeded; mark the batch done. Without this dd_status()
-  # reports "0 done" forever and keeps recommending the move that just ran.
   n <- dd_with_con(cfg, function(con) {
-    DBI::dbExecute(con, "UPDATE moves SET state = 'done', moved_at = ?
-                          WHERE state = 'planned'",
-                   params = list(format(Sys.time(), "%Y-%m-%dT%H:%M:%S")))
+    planned <- DBI::dbGetQuery(con, "SELECT photo_id, src, dest FROM moves
+                                      WHERE state = 'planned'")
+    if (nrow(planned) == 0L) {
+      message("move: nothing planned; ",
+              if (file.exists(script)) "moves.sh has already been reconciled."
+              else "run dd_run_plan() first.")
+      return(0L)
+    }
+    from_receipt <- intersect(dd_move_receipt(receipt), planned$photo_id)
+    message(sprintf("move: %s", if (file.exists(receipt))
+      sprintf("moves.done.tsv records %d of %d planned move(s)",
+              length(from_receipt), nrow(planned))
+      else "no moves.done.tsv; checking the library directly"))
+
+    rest <- planned[!planned$photo_id %in% from_receipt, , drop = FALSE]
+    gone <- !file.exists(rest$src)
+    landed <- file.exists(rest$dest)
+    by_check <- rest$photo_id[gone & landed]
+    vanished <- rest$photo_id[gone & !landed]
+    if (nrow(rest)) {
+      message(sprintf("      of the remaining %d: %d moved, %d still in place",
+                      nrow(rest), length(by_check),
+                      sum(!gone)))
+    }
+    if (length(vanished)) {
+      message(sprintf(paste("      %d source(s) gone with nothing at the",
+                            "destination; left planned"), length(vanished)))
+      for (p in utils::head(rest$src[gone & !landed], 3L)) message("        ", p)
+    }
+
+    ids <- c(from_receipt, by_check)
+    if (!length(ids)) return(0L)
+    DBI::dbExecute(con, sprintf(
+      "UPDATE moves SET state = 'done', moved_at = ?
+        WHERE state = 'planned' AND photo_id IN (%s)",
+      paste(rep("?", length(ids)), collapse = ",")),
+      params = c(list(format(Sys.time(), "%Y-%m-%dT%H:%M:%S")),
+                 as.list(as.integer(ids))))
   })
-  message(sprintf("move: marked %d move(s) done", n))
-  invisible(TRUE)
+  if (n > 0L) message(sprintf("move: marked %d move(s) done", n))
+  else message("move: nothing to mark done.")
+  invisible(n)
 }
 
 # Fail early, with one clear message, if Phase 3 config is incomplete.
 dd_require_move_config <- function(cfg) {
-  need <- c("ssh_user", "ssh_host", "nas_root", "preferred_root",
-            "nonpreferred_root")
+  need <- c("preferred_root", "nonpreferred_root")
   missing <- need[vapply(need, function(k) {
     v <- cfg[[k]]
     is.null(v) || !nzchar(as.character(v)[1])
@@ -463,14 +479,30 @@ dd_require_move_config <- function(cfg) {
     stop("dundee: config field(s) required for the move phase are unset: ",
          paste(missing, collapse = ", "), call. = FALSE)
   }
+  # Both destinations must be inside the library. A move within one mount is a
+  # rename; a move off it copies every duplicate over the wire and deletes the
+  # original. It also catches the config that has not been migrated: these keys
+  # used to hold server-side paths, and /volume1/... on this machine is not a
+  # slower destination but a nonexistent one.
+  outside <- need[!vapply(need, function(k) {
+    dd_path_under(cfg[[k]], cfg$library_root)
+  }, logical(1))]
+  if (length(outside)) {
+    stop("dundee: move destination(s) must be under library_root:\n  ",
+         paste(sprintf("%s: %s", outside, unlist(cfg[outside])),
+               collapse = "\n  "),
+         "\n  library_root: ", cfg$library_root,
+         "\n  (these are local paths now, not server-side ones)",
+         call. = FALSE)
+  }
   invisible(TRUE)
 }
 
 # --- command line dispatch --------------------------------------------------
 
 # Options each command accepts. A single global list of allowed flags let
-# `status --bulk --execute` validate cleanly, and let `--rebase` sit in the list
-# for a stage that never read it. Keying by command makes "unknown options are
+# `status --bulk` validate cleanly, and let `--rebase` sit in the list for a
+# stage that never read it. Keying by command makes "unknown options are
 # rejected" true per command, and gives the usage text something to be checked
 # against (see tests/testthat/test-cli.R).
 dd_cli_opts <- list(
@@ -482,7 +514,7 @@ dd_cli_opts <- list(
   analyze   = "--quiet",
   app       = c("--port", "--no-browser"),
   plan      = c("--bulk", "--quiet"),
-  move      = c("--execute", "--quiet")
+  move      = "--quiet"
 )
 
 # The command lines below are parsed by the drift test, which requires that the
@@ -499,7 +531,7 @@ dd_cli_usage <- function() {
     "  analyze   [work_dir] [--quiet]",
     "  app       [work_dir] [--port=N] [--no-browser]",
     "  plan      [work_dir] [--bulk] [--quiet]",
-    "  move      [work_dir] [--execute] [--quiet]",
+    "  move      [work_dir] [--quiet]",
     "",
     "  With no work_dir, dundee resolves in order: the dd_use() session",
     "  default, $DUNDEE_WORK, $DUNDEE_CONFIG, ./config.yml, ./work/config.yml.",
@@ -592,8 +624,7 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
     app       = dd_app(work, port = as.integer(dd_flag_value(f, "port", 7654L)),
                        launch_browser = !dd_has_flag(f, "no-browser")),
     plan      = dd_run_plan(work, bulk = dd_has_flag(f, "bulk"), quiet = quiet),
-    move      = dd_run_move(work, execute = dd_has_flag(f, "execute"),
-                            quiet = quiet)
+    move      = dd_run_move(work, quiet = quiet)
   )
   invisible(out)
 }

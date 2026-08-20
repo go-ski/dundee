@@ -59,13 +59,10 @@ dd_config_defaults <- function() {
     # but approaching 1 GB for 100 TIFF or RAW derivatives. Evicted
     # least-recently-used; nothing else depends on it, so it is safe to lower.
     review_cache = 100L,
-    # Phase 3: SSH target and path translation.
-    ssh_host = NULL,
-    ssh_user = NULL,
-    # Map the Mac SMB mount root to the Synology server-side absolute path.
-    # e.g. smb_root "/Volumes/photo" -> nas_root "/volume1/photo".
-    nas_root = NULL,
-    # Destination roots (server-side, absolute) for the two output trees.
+    # Phase 3 destination roots for the two output trees. Local paths, and
+    # required to be under library_root: dundee no longer moves anything itself,
+    # it writes a script the user runs against the mounted library, and a move
+    # within one share is a server-side rename rather than a copy over the wire.
     preferred_root = NULL,
     nonpreferred_root = NULL
   )

@@ -17,8 +17,8 @@ invisibly.
 \description{
 Verifies the command-line tools the shell stages need and the R packages
 dundee needs at run time, in one report. Tools that only one phase needs --
-\code{ssh} for the move phase, \code{vipsthumbnail} and shiny/bslib for the review app
--- are reported as warnings and do not make the check fail.
+\code{vipsthumbnail} and shiny/bslib for the review app -- are reported as
+warnings and do not make the check fail.
 }
 \examples{
 \dontrun{

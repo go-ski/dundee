@@ -60,7 +60,7 @@ test_that("keys no stage consumes never count as drift", {
   s <- drift_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   for (stage in names(dd_stage_keys)) dd_stage_stamp(s$con, stage, s$cfg)
   s$cfg$parallel <- 16L
-  s$cfg$ssh_host <- "elsewhere.local"
+  s$cfg$review_cache <- 0L
   s$cfg$db_path <- file.path(s$cfg$work_dir, "other.sqlite")
   expect_equal(nrow(dd_config_drift(s$con, s$cfg)), 0L)
 })

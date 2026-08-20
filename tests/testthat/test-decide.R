@@ -191,8 +191,8 @@ test_that("tightening the threshold drops the decisions it invalidates", {
   expect_equal(DBI::dbGetQuery(s$con, "SELECT COUNT(*) n FROM decisions")$n, 0L)
 
   # and so nothing reaches the move plan
-  s$cfg$library_root <- "/l"; s$cfg$nas_root <- "/v"
-  s$cfg$preferred_root <- "/v/p"; s$cfg$nonpreferred_root <- "/v/n"
+  s$cfg$library_root <- "/l"
+  s$cfg$preferred_root <- "/l/p"; s$cfg$nonpreferred_root <- "/l/n"
   plan <- suppressMessages(
     dd_plan_moves(s$con, s$cfg,
                   manifest_path = file.path(s$cfg$work_dir, "m.tsv"),

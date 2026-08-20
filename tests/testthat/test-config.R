@@ -283,16 +283,26 @@ test_that("the shipped template agrees with the built-in defaults", {
   defaults <- dd_config_defaults()
   # The template fills these in as examples; the defaults leave them NULL, so
   # they are the one place the two are meant to disagree.
-  placeholders <- c("library_root", "ssh_user", "ssh_host", "nas_root",
-                    "preferred_root", "nonpreferred_root")
+  placeholders <- c("library_root", "preferred_root", "nonpreferred_root")
 
   # Compared as character: it makes `folder_priority: []` (NULL from YAML) and
   # character(0) the same empty vector, and sidesteps YAML integer-vs-double.
   flat <- function(x) as.character(unlist(x))
-  for (key in setdiff(names(tmpl), placeholders)) {
+  # cruft is the one key that legitimately differs: the template's phase 3
+  # destinations live under `_dedup`, and unless enumeration prunes it the next
+  # inventory files every moved photo as a new one. The built-in default stays
+  # as it was -- widening it would report drift against every existing store --
+  # so assert the exact relationship rather than excusing the key entirely.
+  expect_equal(flat(tmpl$cruft), c(flat(defaults$cruft), "_dedup"))
+  for (key in setdiff(names(tmpl), c(placeholders, "cruft"))) {
     expect_equal(flat(tmpl[[key]]), flat(defaults[[key]]),
                  info = paste("template key:", key))
   }
+  # And the template's own destinations must be prunable by its own cruft, or
+  # the advice it gives is wrong on the file that gives it.
+  expect_true(any(vapply(c(tmpl$preferred_root, tmpl$nonpreferred_root),
+                         function(p) any(strsplit(p, "/", fixed = TRUE)[[1]]
+                                         %in% tmpl$cruft), logical(1))))
 })
 
 test_that("dd_status reports an empty project and names the next step", {

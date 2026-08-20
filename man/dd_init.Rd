@@ -12,7 +12,7 @@ library lives here.}
 
 \item{library_root}{Read-only root of the photo library.}
 
-\item{...}{Further scalar config fields, e.g. \code{ssh_host = "nas.local"}.}
+\item{...}{Further scalar config fields, e.g. \code{parallel = 4}.}
 
 \item{overwrite}{Replace an existing \code{config.yml}, archiving the previous
 version to \verb{config.history/} first. Without it an existing config is left

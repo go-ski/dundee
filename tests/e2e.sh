@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# End-to-end smoke test of inventory -> analyze -> plan on the fixture library.
+# End-to-end smoke test of inventory -> analyze -> plan -> move on the fixture
+# library.
 # Drives the package entry points (dd_run_*) through exec/dundee rather than the
 # individual stage scripts. Run from the repo root.
 set -euo pipefail
@@ -29,11 +30,9 @@ cat > "$WORK/config.yml" <<YML
 library_root: $FX
 db_path: e2e.sqlite
 parallel: 4
-nas_root: /volume1/photo
-preferred_root: /volume1/photo/_dedup/preferred
-nonpreferred_root: /volume1/photo/_dedup/non-preferred
-ssh_user: tester
-ssh_host: nas.local
+preferred_root: $FX/_dedup/preferred
+nonpreferred_root: $FX/_dedup/non-preferred
+cruft: ['@eaDir', .DS_Store, _dedup]
 YML
 
 # Keep inventory's stderr: the fingerprint workers write there, and a photo
@@ -48,7 +47,7 @@ cat "$inv_err" >&2
 # --- assertions ---
 db="$WORK/e2e.sqlite"
 ngroups=$(sqlite3 "$db" "SELECT COUNT(DISTINCT group_id) FROM groups;")
-nmoves=$(grep -c '^if ' "$WORK/moves.sh" || true)
+nmoves=$(grep -c '^do_move ' "$WORK/moves.sh" || true)
 echo "groups=$ngroups moves=$nmoves"
 
 fail=0
@@ -56,7 +55,7 @@ chk() { if [ "$1" != "$2" ]; then echo "FAIL: $3 (expected $2, got $1)"; fail=1;
 
 chk "$ngroups" 2 "group count"
 chk "$nmoves"  4 "planned move count"
-grep -q '/volume1/photo/_dedup/' "$WORK/moves.sh" || { echo "FAIL: dest not server-side"; fail=1; }
+grep -q "$FX/_dedup/" "$WORK/moves.sh" || { echo "FAIL: dest not under the library"; fail=1; }
 grep -q "sub a/img1 dup.jpg" "$WORK/moves.sh" || { echo "FAIL: spaced path missing"; fail=1; }
 
 # Non-UTF-8 bytes in an EXIF tag must not derail the metadata hash. The worker
@@ -108,5 +107,43 @@ if ./exec/dundee analyze "$WORK" --quiet 2>/dev/null; then
   echo "FAIL: grid change was not rejected"; fail=1
 fi
 mv "$WORK/config.yml.bak" "$WORK/config.yml"
+
+# --- phase 3 for real -------------------------------------------------------
+# dundee no longer executes anything, so this runs the script the way a user
+# would. It has to come after the "library was written to" check above: the
+# library IS written to here, by this script, which is exactly the distinction
+# that assertion exists to draw.
+"$WORK/moves.sh" --dry-run > "$TOP/dry.out" 2>&1 ||
+  { echo "FAIL: dry run exited non-zero"; cat "$TOP/dry.out"; fail=1; }
+grep -q "DRY RUN" "$TOP/dry.out" || { echo "FAIL: dry run not announced"; fail=1; }
+grep -q "^${nmoves} to move" "$TOP/dry.out" ||
+  { echo "FAIL: dry run miscounted"; cat "$TOP/dry.out"; fail=1; }
+[ -e "$FX/_dedup" ] && { echo "FAIL: dry run created the destination"; fail=1; }
+
+"$WORK/moves.sh" > "$TOP/move.out" 2>&1 ||
+  { echo "FAIL: move script exited non-zero"; cat "$TOP/move.out"; fail=1; }
+grep -q "^${nmoves} moved" "$TOP/move.out" ||
+  { echo "FAIL: move miscounted"; cat "$TOP/move.out"; fail=1; }
+[ -f "$WORK/moves.done.tsv" ] || { echo "FAIL: no receipt written"; fail=1; }
+nreceipt=$(wc -l < "$WORK/moves.done.tsv" | tr -d ' ')
+chk "$nreceipt" "$nmoves" "receipt row count"
+# The spaced path is the one most likely to have been split by the shell.
+[ -f "$FX/_dedup/preferred/sub a/img1 dup.jpg" ] ||
+  [ -f "$FX/_dedup/non-preferred/sub a/img1 dup.jpg" ] ||
+  { echo "FAIL: spaced path did not land"; fail=1; }
+nleft=$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'planned';")
+
+# Reconcile: dundee reads the receipt and checks the library, and touches
+# neither. Re-running it must be a no-op.
+./exec/dundee move "$WORK" --quiet > "$TOP/recon.out" 2>&1 ||
+  { echo "FAIL: move reconcile failed"; cat "$TOP/recon.out"; fail=1; }
+chk "$nleft" "$nmoves" "planned before reconcile"
+ndone=$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'done';")
+nplanned=$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'planned';")
+chk "$ndone"    "$nmoves" "moves marked done"
+chk "$nplanned" 0         "moves left planned"
+# dd_status() reports through message(), so stderr is where it lands.
+./exec/dundee status "$WORK" 2>&1 | grep -q "next: nothing" ||
+  { echo "FAIL: status still recommends work"; fail=1; }
 
 if [ "$fail" -eq 0 ]; then echo "e2e: PASS"; else echo "e2e: FAIL"; exit 1; fi
