@@ -8,7 +8,7 @@ dd_compare_fields(members)
 }
 \arguments{
 \item{members}{A data.frame, one row per copy, holding any of the fields in
-the internal field spec (\code{dd_compare_spec()}).}
+the field spec (\code{\link[=dd_compare_spec]{dd_compare_spec()}}).}
 }
 \value{
 A data.frame with one row per present field: \code{section}, \code{field},

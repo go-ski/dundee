@@ -18,7 +18,8 @@ test_that("a stamp records the keys its stage consumes, and nothing else", {
 
   was <- dd_stamp_parse(dd_meta_get(s$con, "stamp_analyze"))
   expect_setequal(names(was), dd_stage_keys$analyze)
-  expect_equal(was[["hamming_threshold"]], "5")
+  expect_equal(was[["hamming_threshold"]],
+               as.character(s$cfg$hamming_threshold))
   expect_false("parallel" %in% names(was))
 })
 
@@ -32,13 +33,16 @@ test_that("editing a key names it, the stage, and both values", {
   s <- drift_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   dd_stage_stamp(s$con, "analyze", s$cfg)
 
-  s$cfg$hamming_threshold <- 3L
+  # Derived, not hardcoded: any literal here becomes the default sooner or later
+  # and then edits nothing.
+  was_thr <- s$cfg$hamming_threshold
+  s$cfg$hamming_threshold <- was_thr + 4L
   dr <- dd_config_drift(s$con, s$cfg)
   expect_equal(nrow(dr), 1L)
   expect_equal(dr$stage, "analyze")
   expect_equal(dr$key, "hamming_threshold")
-  expect_equal(dr$was, "5")
-  expect_equal(dr$now, "3")
+  expect_equal(dr$was, as.character(was_thr))
+  expect_equal(dr$now, as.character(was_thr + 4L))
 })
 
 test_that("a stage that never ran reports no drift", {
@@ -46,7 +50,7 @@ test_that("a stage that never ran reports no drift", {
   # same as "changed" -- claiming drift there would nag about work never done.
   s <- drift_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   dd_stage_stamp(s$con, "analyze", s$cfg)
-  s$cfg$hamming_threshold <- 3L
+  s$cfg$hamming_threshold <- s$cfg$hamming_threshold + 4L
   s$cfg$preference_rules <- "max_meta"       # decide never ran
   dr <- dd_config_drift(s$con, s$cfg)
   expect_equal(dr$stage, "analyze")
@@ -124,19 +128,21 @@ test_that("dd_status() reports zero drift on an untouched config", {
 
 test_that("dd_status() names the changed key and redirects the next step", {
   cfg <- status_cfg(); seed_pipeline(cfg)
-  cfg$hamming_threshold <- 3L
+  was_thr <- cfg$hamming_threshold
+  cfg$hamming_threshold <- was_thr + 4L
 
   msgs <- capture_messages(out <- dd_status(cfg))
   expect_equal(out$drift, 1L)
   expect_match(msgs, "config changed since analyze ran", all = FALSE)
-  expect_match(msgs, "hamming_threshold: 5 -> 3", all = FALSE, fixed = TRUE)
+  expect_match(msgs, sprintf("hamming_threshold: %d -> %d", was_thr, was_thr + 4L),
+               all = FALSE, fixed = TRUE)
   expect_match(msgs, "next: dd_run_analyze\\(\\)   # config changed",
                all = FALSE)
 })
 
 test_that("the earliest drifted stage wins, since re-running implies the rest", {
   cfg <- status_cfg(); seed_pipeline(cfg)
-  cfg$hamming_threshold <- 3L                       # analyze
+  cfg$hamming_threshold <- cfg$hamming_threshold + 4L   # analyze
   cfg$extensions <- setdiff(cfg$extensions, "png")  # inventory, earlier
 
   msgs <- capture_messages(out <- dd_status(cfg))

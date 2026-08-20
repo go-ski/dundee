@@ -8,7 +8,7 @@ dd_fmt_field(field, v)
 }
 \arguments{
 \item{field}{A field name from the internal field spec
-(\code{dd_compare_spec()}).}
+(\code{\link[=dd_compare_spec]{dd_compare_spec()}}).}
 
 \item{v}{The stored value.}
 }

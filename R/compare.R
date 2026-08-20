@@ -1,8 +1,10 @@
 # Comparing the copies in one group, as pure functions.
 #
-# This lives in R/ rather than in inst/shiny/app.R on purpose: the app is not
-# reachable by R CMD check and has no tests, so everything with a decision in it
-# is here, and app.R only renders what these return.
+# This lives in R/ rather than in inst/shiny/app.R on purpose: R CMD check never
+# sources the app, so everything with a decision in it is here, and app.R only
+# renders what these return. Anything here that app.R calls must be exported --
+# runApp() sources it with only library(dundee) attached. test-app.R enforces
+# both halves of that.
 #
 # The reviewer's problem is not reading values, it is spotting which of them
 # differ. In the reference store 24 of 30 groups differ in exactly one attribute
@@ -13,10 +15,22 @@
 #   high    larger is the better copy      low     smaller is
 #   old     earlier timestamp wins         present having it at all wins
 #   chroma  less chroma subsampling wins   ""      no defensible direction
-# `card = TRUE` marks the fields shown under every thumbnail whether or not the
-# copies agree: location and capture date are what decisions turn on, so they
-# are never folded away. They are excluded from the collapsed "identical" line
-# so nothing appears twice, but still show as a table row when they differ.
+
+#' The field spec the comparison helpers and the review app share.
+#'
+#' Exported because `inst/shiny/app.R` calls it, and `shiny::runApp()` sources
+#' the app with only `library(dundee)` attached: an internal function is
+#' invisible there however cleanly it resolves under `R CMD check`, whose tests
+#' run inside the package namespace.
+#'
+#' `card = TRUE` marks the fields shown under every thumbnail whether or not the
+#' copies agree: location and capture date are what decisions turn on, so they
+#' are never folded away. They are excluded from the collapsed "identical" line
+#' so nothing appears twice, but still show as a table row when they differ.
+#'
+#' @return A data.frame with one row per comparable field: `section`, `field`,
+#'   `label`, `better` (the direction, or `""` where there is none) and `card`.
+#' @export
 dd_compare_spec <- function() {
   s <- function(section, field, label, better = "", card = FALSE) {
     data.frame(section = section, field = field, label = label,
@@ -164,7 +178,7 @@ dd_best_index <- function(v, better) {
 #' Compare the copies in one group field by field.
 #'
 #' @param members A data.frame, one row per copy, holding any of the fields in
-#'   the internal field spec (`dd_compare_spec()`).
+#'   the field spec ([dd_compare_spec()]).
 #' @return A data.frame with one row per present field: `section`, `field`,
 #'   `label`, `differs`, `shared` (the common value when they agree), `best`
 #'   (index of the better copy, or `NA`), and a `values` list column.
@@ -248,7 +262,7 @@ dd_member_table <- function(photos, details = NULL) {
 #' Render one field's value the way the review app shows it.
 #'
 #' @param field A field name from the internal field spec
-#'   (`dd_compare_spec()`).
+#'   ([dd_compare_spec()]).
 #' @param v The stored value.
 #' @return A one-element character vector.
 #' @export

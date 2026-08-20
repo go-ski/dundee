@@ -25,7 +25,7 @@ db_path: dundee.sqlite
 
 # Concurrent fingerprint workers. Over SMB the network, not the CPU, is
 # usually the limit; 4-8 is typical, higher can thrash the mount.
-parallel: 4
+parallel: 8
 
 # Extensions to inventory (lowercase, no dot). Trim this to speed up
 # enumeration if your library has no RAW files.
@@ -44,19 +44,24 @@ cruft: ['@eaDir', '#recycle', '#snapshot', '@tmp', .@__thumb, '@sharebin',
 # dHash geometry: an N x N grid gives N^2 bits. FIXED ONCE INVENTORY HAS RUN --
 # fingerprints of different geometries cannot be compared, so changing this
 # means re-fingerprinting the whole library in a fresh work directory.
-fingerprint_grid: 8
+fingerprint_grid: 16
 
 # Maximum Hamming distance (inclusive) for two photos to be called near
-# duplicates. 0-3 = very tight (re-saves, crops of a few pixels); 5 = default;
-# 10+ starts merging different frames of the same scene. Safe to change and
-# re-run analyze: grouping is recomputed from stored fingerprints.
-hamming_threshold: 5
+# duplicates. The scale follows fingerprint_grid: an N x N grid gives N^2 bits,
+# so the same distance is far tighter on a finer grid. At the default 16x16
+# (256 bits): 3 is very tight (re-saves, crops of a few pixels), and 20 is the
+# equivalent of the old 8x8 default of 5 -- both about 8% of the bit budget.
+# Scaling the rest of that guidance, 40+ starts merging different frames of the
+# same scene. Safe to change and re-run analyze: grouping is recomputed from
+# stored fingerprints.
+hamming_threshold: 3
 
 # LSH bands used to block candidate pairs. Must divide fingerprint_grid^2.
 # More bands = more candidates examined = higher recall, slower analyze.
-# For b bands over 64 bits, a pair at distance d collides with probability
-# 1 - (1 - (1 - d/64)^(64/b))^b; b = 8 gives ~0.997 at d = 5.
-lsh_bands: 8
+# For b bands over n bits, a pair at distance d collides with probability
+# 1 - (1 - (1 - d/n)^(n/b))^b; b = 16 over 256 bits gives ~1.000 at d <= 10 and
+# ~0.994 at d = 20, decaying past 30.
+lsh_bands: 16
 
 # --- choosing the preferred copy -------------------------------------------
 

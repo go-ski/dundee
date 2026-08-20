@@ -259,9 +259,9 @@ Every stage is idempotent and re-runnable.
 
 ## Key configuration
 
-See `config.example.yml`, which is the same annotated template `dd_init()`
-installs. (It is not shipped inside the built package; from an installed dundee,
-`dd_config_example("somewhere.yml")` writes the same file.)
+See `inst/templates/config.yml`, the annotated template `dd_init()` installs.
+(From an installed dundee, `dd_config_example("somewhere.yml")` writes the same
+file wherever you want to read it.)
 
 A dundee project is a **directory**, and `config.yml` lives inside it. There is
 no `work_dir:` key — the work directory *is* the directory the config is in.
@@ -355,7 +355,7 @@ grouping is recomputed from the stored fingerprints. Note that *tightening* it
 can dissolve a group, and photos left in no group at all lose their decisions
 (see Resumability).
 
-> On `lsh_bands`: the collision probability quoted in `config.example.yml` is the
+> On `lsh_bands`: the collision probability quoted in the config template is the
 > standard bit-sampling LSH result, which assumes the differing bits are spread
 > uniformly over positions and that bands are independent. dHash bits are
 > adjacent-pixel comparisons, so they are spatially correlated, and real edits

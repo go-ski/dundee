@@ -99,7 +99,8 @@ test_that("disjoint library_root and work_dir resolve, and a missing library err
 test_that("unknown keys warn with a suggestion, and are not silently used", {
   wd <- new_work(hamming_thresold = 12)
   expect_warning(cfg <- dd_config(wd), "hamming_thresold.*did you mean")
-  expect_equal(cfg$hamming_threshold, 5L)   # default, not 12
+  expect_equal(cfg$hamming_threshold,
+               dd_config_defaults()$hamming_threshold)   # default, not 12
 })
 
 test_that("out-of-range and inconsistent tuning values are rejected together", {
@@ -168,9 +169,15 @@ test_that("dd_init writes a template that loads cleanly", {
   expect_message(cfg2 <- dd_init(wd), "already exists")
   expect_equal(cfg2$hamming_threshold, 2L)
 
-  # overwrite = TRUE resets the file but archives what was there
+  # overwrite = TRUE resets the file but archives what was there. Compared
+  # against the template dd_init() actually reached, not against the defaults:
+  # dd_template_lines() prefers the installed copy, so asserting the default
+  # here would fail on a stale install rather than on a real disagreement.
+  # That the template and the defaults agree is its own test, below.
+  tmpl_thr <- as.integer(sub("^hamming_threshold:\\s*", "",
+    grep("^hamming_threshold:", dd_template_lines(), value = TRUE)[[1]]))
   cfg3 <- dd_init(wd, library_root = root, overwrite = TRUE)
-  expect_equal(cfg3$hamming_threshold, 5L)
+  expect_equal(cfg3$hamming_threshold, tmpl_thr)
   expect_true(length(list.files(file.path(wd, "config.history"))) >= 1L)
 })
 
@@ -255,16 +262,37 @@ test_that("rebase rewrites stored paths onto the new library root", {
   expect_true(dd_config_guard(con, moved))
 })
 
-test_that("config.example.yml matches the installed template", {
-  tmpl <- try(dd_template_lines(), silent = TRUE)
-  skip_if(inherits(tmpl, "try-error"), "template not reachable in this run mode")
-  example <- file.path(dd_resolve_path("."), "config.example.yml")
-  for (up in c("..", file.path("..", ".."), file.path("..", "..", ".."))) {
-    if (file.exists(example)) break
-    example <- dd_resolve_path(file.path(up, "config.example.yml"))
+test_that("the shipped template agrees with the built-in defaults", {
+  # dd_init() hands a new project the template; a config that omits a key gets
+  # the default. They drifted once -- R/config.R moved to grid 16 / threshold 3
+  # / bands 16 while the template still said 8 / 5 / 8 -- so the two kinds of
+  # user got different near-duplicate behaviour and nothing noticed.
+  #
+  # Source tree first, installed copy second: under dev-test.R the repo is what
+  # matters, under R CMD check the installed template is the one that ships.
+  # (dd_template_lines() prefers the installed copy, which is why this does not
+  # use it -- a stale install would make the check meaningless.)
+  path <- NULL
+  for (p in c("../../inst/templates/config.yml",
+              system.file("templates", "config.yml", package = "dundee"))) {
+    if (nzchar(p) && file.exists(p)) { path <- p; break }
   }
-  skip_if_not(file.exists(example), "config.example.yml not in this build")
-  expect_equal(readLines(example), tmpl)
+  skip_if(is.null(path), "config template not reachable in this run mode")
+
+  tmpl <- yaml::read_yaml(path)
+  defaults <- dd_config_defaults()
+  # The template fills these in as examples; the defaults leave them NULL, so
+  # they are the one place the two are meant to disagree.
+  placeholders <- c("library_root", "ssh_user", "ssh_host", "nas_root",
+                    "preferred_root", "nonpreferred_root")
+
+  # Compared as character: it makes `folder_priority: []` (NULL from YAML) and
+  # character(0) the same empty vector, and sidesteps YAML integer-vs-double.
+  flat <- function(x) as.character(unlist(x))
+  for (key in setdiff(names(tmpl), placeholders)) {
+    expect_equal(flat(tmpl[[key]]), flat(defaults[[key]]),
+                 info = paste("template key:", key))
+  }
 })
 
 test_that("dd_status reports an empty project and names the next step", {

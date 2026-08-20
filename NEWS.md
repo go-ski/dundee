@@ -2,6 +2,30 @@
 
 ## dundee 0.1.0 Correctness fixes
 
+* **The review app crashed on every group.** `inst/shiny/app.R` called
+  `dd_compare_spec()`, which was not exported. `shiny::runApp()` sources the app
+  with only `library(dundee)` attached, so the function was invisible there even
+  though it resolved everywhere else -- `R CMD check` never sources the app, and
+  `test_check()` runs the suite inside the package namespace where internals are
+  reachable. `dd_compare_spec()` is now exported, and `tests/test-app.R` guards
+  both halves: a static check that every dundee function the app calls is in
+  `NAMESPACE`, and a `shiny::testServer()` test that renders a real group.
+
+* **The config template now matches the built-in defaults.** They had diverged:
+  `dd_config_defaults()` moved to `fingerprint_grid` 16, `hamming_threshold` 3,
+  `lsh_bands` 16 and `parallel` 8, while `inst/templates/config.yml` still said
+  8 / 5 / 8 / 4 -- so a project started with `dd_init()` and one that simply
+  omitted those keys got different near-duplicate behaviour. The template's
+  annotations were also written for a 64-bit fingerprint and have been
+  recomputed for the 256 bits a 16x16 grid gives. A test now asserts the two
+  agree on every key except the site-specific placeholders.
+
+* `config.example.yml` has been removed. It was a byte-identical copy of
+  `inst/templates/config.yml` that never shipped (`.Rbuildignore`), and the test
+  said to keep it in step skipped under `R CMD check` and compared against the
+  *installed* template under `dev-test.R`. `dd_config_example()` still writes the
+  template wherever you want to read it.
+
 * **Group ids are now stable across analyze runs.** They were assigned by
   position, so a later import that created a group ahead of an existing one
   shifted every id after it. Because `dd_apply_bulk_decisions()` keyed
