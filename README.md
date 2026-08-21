@@ -291,13 +291,11 @@ See `inst/templates/config.yml`, the annotated template `dd_init()` installs.
 (From an installed dundee, `dd_config_example("somewhere.yml")` writes the same
 file wherever you want to read it.)
 
-A dundee project is a **directory**, and `config.yml` lives inside it. There is
-no `work_dir:` key — the work directory *is* the directory the config is in.
-Everything dundee writes for one library sits beside the config; to work on a
-second library, make a second work directory. There is no `temp_dir:` key
-either: scratch is always `<work_dir>/tmp`. (A legacy `work_dir:` entry is still
-honoured, with a message pointing at `dd_migrate()`, which relocates an old-style
-config into its work directory.)
+A dundee project is a **directory**, and `config.yml` lives inside it. The work
+directory *is* the directory the config is in, so there is no `work_dir:` key and
+no `temp_dir:` key — scratch is always `<work_dir>/tmp`. Everything dundee writes
+for one library sits beside the config, which is what makes a second library a
+second directory rather than a second set of paths to keep in step.
 
 The **only path you must set** is:
 
@@ -412,9 +410,9 @@ If it is a different library, start a fresh work directory.
 a typo. Unknown keys warn and are ignored, so fix it before the run matters.
 
 **Photos with accented or non-Latin names are re-fingerprinted every run** —
-a store built by dundee ≤ 0.0.1 under a `C`/`POSIX` locale holds those paths in
-escaped form. The locale no longer matters, but the mangled paths already in the
-store do: start a fresh work directory once, and it will not recur.
+the store holds those paths in escaped form, so the resume filter never matches
+them. Paths are written as UTF-8 bytes now, so this cannot recur; a store that
+already has them needs a fresh work directory once.
 
 **Files that vips cannot decode** are logged to the `errors` table rather than
 fingerprinted, and are retried on each inventory run. `dd_status()` reports the

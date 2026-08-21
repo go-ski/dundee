@@ -35,41 +35,17 @@ test_that("an absolute db_path is reduced to its basename under work_dir", {
   expect_equal(cfg$db_path, file.path(cfg$work_dir, "custom.sqlite"))
 })
 
-test_that("temp_dir in the file is ignored with a message", {
-  wd <- new_work(temp_dir = "/tmp/somewhere-else")
-  expect_message(cfg <- dd_config(wd), "temp_dir.*no longer user-configurable")
+test_that("the work directory is the config's own directory, always", {
+  # A project is a directory, so there is nothing to configure and nothing to
+  # keep in step. Any work_dir: in the file is inert.
+  wd <- tempfile("work-"); dir.create(wd)
+  writeLines(sprintf("work_dir: %s", tempfile("elsewhere-")),
+             file.path(wd, "config.yml"))
+  expect_silent(cfg <- dd_config(wd))
+  expect_equal(cfg$work_dir, dd_resolve_path(wd))
   expect_equal(cfg$temp_dir, file.path(cfg$work_dir, "tmp"))
 })
 
-test_that("a work_dir agreeing with its own directory is silent", {
-  wd <- tempfile("work-"); dir.create(wd)
-  writeLines(sprintf("work_dir: %s", wd), file.path(wd, "config.yml"))
-  expect_silent(cfg <- dd_config(wd))
-  expect_equal(cfg$work_dir, dd_resolve_path(wd))
-})
-
-test_that("a legacy work_dir pointing elsewhere is honoured, with a message", {
-  outer <- tempfile("outer-"); dir.create(outer)
-  wd <- file.path(outer, "work")
-  yml <- file.path(outer, "config.yml")
-  writeLines(sprintf("work_dir: %s", wd), yml)
-  expect_message(cfg <- dd_config(yml), "legacy layout")
-  expect_equal(cfg$work_dir, dd_resolve_path(wd))
-})
-
-test_that("dd_migrate moves a legacy config into its work directory", {
-  outer <- tempfile("outer-"); dir.create(outer)
-  wd <- file.path(outer, "work")
-  yml <- file.path(outer, "config.yml")
-  writeLines(c(sprintf("work_dir: %s", wd), "temp_dir: /nope",
-               "hamming_threshold: 3"), yml)
-  expect_message(out <- dd_migrate(yml), "config moved to")
-  expect_equal(out, dd_resolve_path(wd))
-  moved <- readLines(file.path(wd, "config.yml"))
-  expect_false(any(grepl("^work_dir:|^temp_dir:", moved)))
-  expect_silent(cfg <- dd_config(wd))
-  expect_equal(cfg$hamming_threshold, 3L)
-})
 
 test_that("work_dir nested inside library_root is rejected", {
   root <- tempfile("lib-"); dir.create(root)
@@ -210,8 +186,8 @@ test_that("the store guard catches a changed fingerprint grid or library root", 
 })
 
 test_that("the case probe writes nothing into the directory it tests", {
-  # library_root is mounted read-only; probing it must not move its mtime.
-  # An earlier version created a .dundee-Case-<pid> file here.
+  # library_root is mounted read-only, and probing it must not move its mtime,
+  # so the probe may not create a scratch file even a self-deleting one.
   d <- tempfile("probe-"); dir.create(d)
   file.create(file.path(d, "Photo.jpg"))
   before <- list.files(d, all.files = TRUE, no.. = TRUE)

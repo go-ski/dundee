@@ -24,10 +24,10 @@ vips gaussnoise "$out/_s2.v" 96 72 >/dev/null 2>&1
 vips copy "$out/_s2.v" "$out/img2.jpg" >/dev/null 2>&1
 
 # A photo whose EXIF Artist carries Latin-1 bytes in a field declared UTF-8 --
-# what an older camera or editor writes. exiftool emits those bytes raw, which
-# used to make the worker's `sort` abort with "Illegal byte sequence" and store
-# the photo with meta_count 0. It is a distinct image, so it joins no group and
-# leaves the group/move counts alone.
+# what an older camera or editor writes. exiftool emits those bytes raw, and the
+# worker's `sort` must survive them rather than aborting with "Illegal byte
+# sequence" and storing meta_count 0. It is a distinct image, so it joins no
+# group and leaves the group/move counts alone.
 vips gaussnoise "$out/_s3.v" 96 72 >/dev/null 2>&1
 vips copy "$out/_s3.v" "$out/latin1-exif.jpg" >/dev/null 2>&1
 if command -v exiftool >/dev/null 2>&1; then

@@ -1,7 +1,7 @@
-# A dundee work directory is meant to be hand-edited -- dd_init() says so. But
-# nothing recorded what a stage had run under, so dd_status() reported a next
-# step computed entirely from row counts: change hamming_threshold and it still
-# recommended dd_run_move() against groups built at the old value.
+# config.yml is meant to be hand-edited, so a next step computed from row counts
+# alone is wrong the moment one is: the counts cannot tell that the groups were
+# built at a threshold the file no longer says. Each stage stamps what it ran
+# under, and dd_status() compares.
 
 drift_store <- function() {
   cfg <- dd_config_defaults()

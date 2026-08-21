@@ -57,11 +57,10 @@ dd_flip_case <- function(x) {
          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", x)
 }
 
-# The probe must be READ-ONLY: this runs on library_root, which is mounted
-# read-only and whose mtime must not move (an earlier version created and
-# deleted a .dundee-Case-<pid> file here, which tests/e2e.sh caught as
-# "library was written to"). Instead, take an existing entry whose name changes
-# under a case flip and ask whether the flipped name still resolves.
+# Read-only by construction: this runs on library_root, which is mounted
+# read-only and whose mtime must not move. Never probe by writing a test file.
+# Instead take an existing entry whose name changes under a case flip and ask
+# whether the flipped name still resolves.
 dd_fs_case_insensitive <- function(path = tempdir()) {
   dir <- path
   while (!dir.exists(dir) && dirname(dir) != dir) dir <- dirname(dir)
@@ -295,8 +294,9 @@ dd_config_source <- function(x = NULL) {
   list(file = x, work_dir = dd_resolve_path(dirname(x)))
 }
 
-# A typo (hamming_thresold:) used to be copied in and silently ignored, so the
-# run completed with the default value -- the most expensive kind of failure.
+# config.yml is hand-edited, so a typo (hamming_thresold:) is the likeliest
+# error there is, and the silent version of it -- run completes, default value
+# used -- is the most expensive. Name it, and guess what was meant.
 dd_check_keys <- function(user, defaults) {
   known <- c(names(defaults), "work_dir", dd_derived_keys)
   bad <- setdiff(names(user), known)
@@ -378,22 +378,10 @@ dd_config <- function(config = NULL, require_library = FALSE, create = TRUE) {
   cfg <- utils::modifyList(defaults,
                            user[intersect(names(user), names(defaults))])
 
-  # The directory holding config.yml is the work directory. A `work_dir:` key
-  # is honoured only when it disagrees, and only for backward compatibility.
+  # A project is a directory: the one holding config.yml is the work directory.
+  # There is nothing to configure here, which is what makes a second library a
+  # second directory rather than a second set of paths to keep in step.
   cfg$work_dir <- src$work_dir
-  if (!is.null(user$work_dir)) {
-    declared <- dd_resolve_path(user$work_dir)
-    if (!identical(declared, src$work_dir)) {
-      message("config: '", src$file, "' declares work_dir: ", declared,
-              "\n  (legacy layout; honoured for now -- migrate with ",
-              "dd_migrate(\"", src$file, "\"))")
-      cfg$work_dir <- declared
-    }
-  }
-  if (!is.null(user$temp_dir)) {
-    message("config: 'temp_dir' is no longer user-configurable; scratch ",
-            "space is always <work_dir>/tmp.")
-  }
 
   cfg$extensions <- tolower(as.character(cfg$extensions))
   cfg <- dd_validate(cfg)
@@ -711,38 +699,4 @@ dd_status <- function(config = NULL) {
   }
   message("  next: ", nxt)
   invisible(out)
-}
-
-# ---------------------------------------------------------------------------
-# migration from the old layout
-# ---------------------------------------------------------------------------
-
-#' Move a legacy `config.yml` into its work directory.
-#'
-#' @param path Existing config file written under the old convention.
-#' @param remove Delete the original after a successful copy.
-#' @return The new work directory, invisibly.
-#' @export
-dd_migrate <- function(path = "config.yml", remove = FALSE) {
-  user <- yaml::read_yaml(path)
-  wd <- dd_resolve_path(user$work_dir %||% "work")
-  if (identical(wd, dd_resolve_path(dirname(path)))) {
-    message("dundee: ", path, " is already inside its work directory.")
-    return(invisible(wd))
-  }
-  dir.create(wd, recursive = TRUE, showWarnings = FALSE)
-  dest <- file.path(wd, "config.yml")
-  if (file.exists(dest)) {
-    stop("dundee: ", dest, " already exists; move or remove it first.",
-         call. = FALSE)
-  }
-  lines <- grep("^\\s*(work_dir|temp_dir)\\s*:", readLines(path),
-                value = TRUE, invert = TRUE)
-  writeLines(lines, dest)
-  if (isTRUE(remove)) unlink(path)
-  message("dundee: config moved to ", dest,
-          if (!isTRUE(remove)) paste0("\n  the old file at ", path,
-                                      " can now be deleted"),
-          "\n  then: dd_use(\"", wd, "\")")
-  invisible(wd)
 }

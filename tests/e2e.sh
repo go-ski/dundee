@@ -35,8 +35,8 @@ nonpreferred_root: $FX/_dedup/non-preferred
 cruft: ['@eaDir', .DS_Store, _dedup]
 YML
 
-# Keep inventory's stderr: the fingerprint workers write there, and a photo
-# with non-UTF-8 EXIF used to make their `sort` abort noisily.
+# Keep inventory's stderr: the fingerprint workers write there, and a photo with
+# non-UTF-8 EXIF is what makes their `sort` abort noisily if it regresses.
 inv_err="$TOP/inventory.err"
 ./exec/dundee inventory "$WORK" --quiet 2>"$inv_err"
 cat "$inv_err" >&2
@@ -109,8 +109,8 @@ fi
 mv "$WORK/config.yml.bak" "$WORK/config.yml"
 
 # --- phase 3 for real -------------------------------------------------------
-# dundee no longer executes anything, so this runs the script the way a user
-# would. It has to come after the "library was written to" check above: the
+# dundee executes nothing, so this runs the script the way a user would. It has
+# to come after the "library was written to" check above: the
 # library IS written to here, by this script, which is exactly the distinction
 # that assertion exists to draw.
 # Both tiers are represented (2 groups, one winner each), which is what makes

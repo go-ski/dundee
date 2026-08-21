@@ -99,7 +99,8 @@ if meta_lines="$(exiftool -s -s -s -All --File:all --ExifTool:all "$T" \
 else
   # Unreadable is not the same as absent. Empty fields arrive as SQL NULL, so
   # a failure stays distinguishable from a photo that genuinely carries no
-  # tags -- exactly the distinction the old `|| meta_lines=""` destroyed.
+  # tags. Never default this to "" -- max_meta would then rank a photo whose
+  # metadata could not be read as one that has none.
   meta_hash=""
   meta_count=""
 fi

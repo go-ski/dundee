@@ -40,10 +40,10 @@ test_that("ties fall back to lowest photo_id deterministically", {
 
 # --- group identity across analyze runs ------------------------------------
 #
-# group_id used to be positional, so a later import that created a group ahead
-# of an existing one shifted every id after it. Decisions carry the id they were
-# recorded under, so the bulk pass then skipped a *different* group and its
-# photos never reached the move plan.
+# Decisions carry the group_id they were recorded under, so an id must mean the
+# same group in every later analyze run. A positional id cannot: one new group
+# sorting ahead of an existing one shifts every id after it, and the bulk pass
+# then acts on a group the reviewer never saw.
 
 decide_store <- function() {
   cfg <- dd_config_defaults()
@@ -72,8 +72,8 @@ test_that("a group keeps its id when an earlier photo gains a duplicate", {
   b_gid <- unique(g1$group_id[g1$photo_id %in% c(2L, 3L)])
   expect_length(b_gid, 1L)
 
-  # A later import turns the previously-unique photo into a duplicate. Its
-  # group sorts ahead of the b1/b2 group, which used to renumber the latter.
+  # A later import turns a lone photo into a duplicate, and its group sorts
+  # ahead of the b1/b2 group -- the case that renumbers everything after it.
   add_photo(s$con, "/l/lonely_copy.jpg", "ZZZZ")
   g2 <- dd_analyze(s$con, s$cfg, quiet = TRUE)
 
@@ -153,9 +153,9 @@ test_that("a group that gained a member keeps its reviewed preferred copy", {
 
 # --- photos that stop being duplicates --------------------------------------
 #
-# dd_plan_moves() reads `decisions`, never `groups`. So a group dissolved by a
-# tightened hamming_threshold used to leave its decisions behind, and dundee
-# went on relocating photos it no longer considered duplicates.
+# dd_plan_moves() reads `decisions`, never `groups`, so a decision outliving its
+# group is a photo dundee still relocates while no longer calling it a duplicate.
+# Tightening hamming_threshold is exactly how that happens.
 
 near_store <- function(threshold = 5L) {
   s <- decide_store()

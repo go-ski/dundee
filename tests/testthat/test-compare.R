@@ -1,7 +1,7 @@
-# The review app used to show absolutes side by side, so the reviewer had to
-# diff "3024x4032 8472913 bytes meta:38" against its twin by eye. In the
-# reference store 24 of 30 groups agree on every displayed field and differ in
-# exactly one that was not displayed at all, so what matters is the difference.
+# 24 of 30 groups in the reference store agree on every displayed field and
+# differ in exactly one, so what the reviewer needs is the difference, not the
+# values: absolutes side by side leave them diffing "3024x4032 8472913 bytes"
+# against its twin by eye.
 
 two <- function(...) {
   d <- list(...)
@@ -129,8 +129,8 @@ test_that("a later rule is reported when the earlier ones tie", {
 
 test_that("when nothing separates them the rule is NA, not a guess", {
   # 24 of the 30 groups in the reference store land here: every rule ties and
-  # the winner comes from the photo_id tie-break. Presenting that as a decision
-  # is what the app used to do.
+  # the winner comes from the photo_id tie-break. Presenting an arbitrary
+  # winner as a reasoned one is worse than saying nothing separated them.
   ex <- dd_explain_preference(group(), pref_cfg())
   expect_true(is.na(ex$rule))
   expect_true(is.na(ex$detail))

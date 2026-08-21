@@ -50,9 +50,9 @@ dd_warn_dest_cruft <- function(cfg) {
 # The generated script's header: usage, preflight and the do_move worker every
 # row below it calls. Kept as one block so the per-move lines stay short.
 #
-# One failing move must not abandon the rest of the batch: when ssh streamed the
-# whole thing with nobody watching, aborting on the first error was right, but
-# this is run by hand against the user's own library. That resilience lives in
+# One failing move must not abandon the rest of the batch: this is run by hand
+# against the user's own library, where an unwritable file is a fact about that
+# file, not a reason to strand the other four hundred. That resilience lives in
 # do_move -- it captures each failure, records it, and always returns 0 -- and
 # NOT in dropping `set -e`, which stays on to catch anything going wrong in the
 # preflight or between the rows. The exit status at the end reports the count.

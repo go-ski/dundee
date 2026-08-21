@@ -74,19 +74,16 @@ dd_resume_todo <- function(con, enum_tsv, todo_path) {
 
 # Staging shards, ordered oldest-run-first.
 #
-# `list.files()` returns lexicographic order, and the shard name carries a pid.
-# Pids are neither chronological across runs nor numerically ordered as strings
-# ("shard.999" sorts after "shard.10000"), so when a file changed between runs
-# and two shards both held a row for it, the *stale* row could be the one that
-# won the upsert. Sort by the run stamp baked into the name (legacy pid-only
-# names get an empty stamp and sort first, which is correct: they are older),
-# then by mtime, then by name.
+# Order matters and lexicographic order will not do it: the shard name carries a
+# pid, and pids are neither chronological across runs nor numerically ordered as
+# strings ("shard.999" sorts after "shard.10000"), so the stale row could win the
+# upsert. The UTC run stamp in the name is the only chronological part, hence
+# stamp first, then mtime, then name.
 dd_staging_files <- function(dir, pattern) {
   f <- list.files(dir, pattern = pattern, full.names = TRUE)
   if (length(f) < 2L) return(f)
   base <- basename(f)
   stamp <- sub("^shard\\.([0-9]{8}T[0-9]{6}Z)\\..*$", "\\1", base)
-  stamp[stamp == base] <- ""            # legacy shard.<pid>.<ext>
   f[order(stamp, file.mtime(f), base)]
 }
 

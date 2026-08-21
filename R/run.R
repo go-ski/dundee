@@ -56,9 +56,9 @@ dd_pf_line <- function(status, name, note = "", quiet = FALSE) {
   invisible(NULL)
 }
 
-# Absent means dundee cannot run at all. `bash` is on the list because dd_sh()
-# invokes it directly; it used to be implicit, since the checker was itself a
-# bash script and could not report its own interpreter missing.
+# Absent means dundee cannot run at all. `bash` belongs on the list because
+# dd_sh() invokes it directly: a checker written in bash could never report its
+# own interpreter missing, which is exactly why this one is R.
 dd_pf_required <- c(
   bash       = "the shell stages run under bash",
   vips       = "install libvips (brew install vips)",
@@ -512,9 +512,8 @@ dd_require_move_config <- function(cfg) {
   }
   # Both destinations must be inside the library. A move within one mount is a
   # rename; a move off it copies every duplicate over the wire and deletes the
-  # original. It also catches the config that has not been migrated: these keys
-  # used to hold server-side paths, and /volume1/... on this machine is not a
-  # slower destination but a nonexistent one.
+  # original. Enforcing it here also means a server-side path like /volume1/...
+  # fails with one clear message rather than as N failed mkdirs.
   outside <- need[!vapply(need, function(k) {
     dd_path_under(cfg[[k]], cfg$library_root)
   }, logical(1))]

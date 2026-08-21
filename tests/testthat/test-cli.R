@@ -1,7 +1,7 @@
-# The CLI's argument handling is where dundee has actually drifted: --rebase sat
-# in the allow-list unwired to any stage, and `move --quiet` was accepted and
-# ignored. Nothing in R CMD check reached it -- only tests/e2e.sh did, and that
-# is a shell script check never runs. These tests close that gap.
+# Argument handling is reachable by nothing in R CMD check -- only tests/e2e.sh
+# exercises the CLI, and that is a shell script check never runs. So an option
+# in the allow-list that no stage reads, or one a command silently ignores,
+# survives indefinitely. These tests hold the table and the usage text together.
 
 test_that("the usage text and the per-command option table agree", {
   usage <- strsplit(dd_cli_usage(), "\n", fixed = TRUE)[[1]]
@@ -19,8 +19,8 @@ test_that("an unknown command is rejected", {
 })
 
 test_that("options are rejected per command, not globally", {
-  # --bulk is a real dundee option, just not one `status` takes. Under a single
-  # global allow-list this validated cleanly and was then dropped on the floor.
+  # --bulk is a real dundee option, just not one `status` takes -- the case a
+  # single global allow-list accepts and then drops on the floor.
   expect_error(dd_parse_args(c("status", "~/w", "--bulk")),
                "status does not accept")
   expect_error(dd_parse_args(c("analyze", "--rebase")),

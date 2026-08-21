@@ -1,10 +1,11 @@
-# The fingerprint worker sorts exiftool's output before hashing it. That sort
-# read from a pipe, and macOS sort aborts with "Illegal byte sequence" (exit 2)
-# the moment a pipe carries bytes that are not valid UTF-8 in the ambient
-# locale -- which any EXIF Artist/Model holding Latin-1 or Shift-JIS does.
-# pipefail turned that into a failed pipeline and `|| meta_lines=""` swallowed
-# it, so the photo was stored with meta_count 0 and the hash of the empty
-# string. max_meta then ranked a 14-tag photo below its metadata-poorer twin.
+# The fingerprint worker sorts exiftool's output before hashing it, and EXIF
+# Artist/Model routinely hold Latin-1 or Shift-JIS bytes. macOS sort aborts with
+# "Illegal byte sequence" (exit 2) on such bytes when reading a pipe under a
+# UTF-8 locale, so the sort must read a file, under LC_ALL=C.
+#
+# It has to fail loudly too: swallowed, it stores meta_count 0 and the hash of
+# the empty string, and max_meta then ranks a 14-tag photo below its poorer
+# twin -- a wrong preference nothing downstream can detect.
 
 # Prefer the source tree, so `Rscript dev-test.R` exercises the file being
 # edited rather than whatever is installed; fall back to the installed copy,

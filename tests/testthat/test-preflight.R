@@ -1,8 +1,6 @@
-# dd_preflight() used to be half a shell script and half R, combining an exit
-# status with an R flag. The distinction that matters is required vs
-# phase-specific: a machine that can run inventory and analyze must report
-# "ready" even with no vipsthumbnail, which is what README had to explain in
-# prose.
+# The distinction that matters is required vs phase-specific: a machine that can
+# run inventory and analyze must report "ready" even with no vipsthumbnail, or
+# the check fails on a tool the run about to happen will never call.
 
 test_that("optional tools may be absent but required ones may not", {
   skip_on_os("windows")

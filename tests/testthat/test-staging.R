@@ -16,18 +16,21 @@ stage_row <- function(path, size, pixel_hash) {
         sep = "\t")
 }
 
-test_that("shard ordering is chronological, not lexicographic", {
+test_that("within one run, mtime orders shards the pid cannot", {
+  # Every shard of a run shares its stamp, so the tie-break carries the order.
+  # The pid is no help: lexicographically "10000" precedes "999".
   d <- tempfile("stage-"); dir.create(d)
-  # Legacy pid-only names: lexicographically "shard.10000" precedes
-  # "shard.999", but 999 was written first. mtime must decide.
-  old_f <- file.path(d, "shard.999.tsv")
-  new_f <- file.path(d, "shard.10000.tsv")
+  old_f <- file.path(d, "shard.20260101T000000Z.999.tsv")
+  new_f <- file.path(d, "shard.20260101T000000Z.10000.tsv")
   file.create(old_f, new_f)
   Sys.setFileTime(old_f, Sys.time() - 3600)
   Sys.setFileTime(new_f, Sys.time())
-  expect_equal(basename(list.files(d)), c("shard.10000.tsv", "shard.999.tsv"))
+  expect_equal(basename(list.files(d)),
+               c("shard.20260101T000000Z.10000.tsv",
+                 "shard.20260101T000000Z.999.tsv"))
   expect_equal(basename(dd_staging_files(d, "\\.tsv$")),
-               c("shard.999.tsv", "shard.10000.tsv"))
+               c("shard.20260101T000000Z.999.tsv",
+                 "shard.20260101T000000Z.10000.tsv"))
 })
 
 test_that("a run stamp orders shards even when mtimes are equal", {
@@ -39,12 +42,6 @@ test_that("a run stamp orders shards even when mtimes are equal", {
   expect_equal(basename(dd_staging_files(d, "\\.tsv$")),
                c("shard.20260101T000000Z.999.tsv",
                  "shard.20260102T000000Z.10000.tsv"))
-})
-
-test_that("a legacy pid-only shard sorts before stamped ones", {
-  d <- tempfile("stage-"); dir.create(d)
-  file.create(file.path(d, c("shard.20260101T000000Z.2.tsv", "shard.7.tsv")))
-  expect_equal(basename(dd_staging_files(d, "\\.tsv$"))[1], "shard.7.tsv")
 })
 
 test_that("the newest shard wins and shards are pruned after merge", {

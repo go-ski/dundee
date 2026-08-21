@@ -1,8 +1,8 @@
-# inst/shiny/app.R is the one file R CMD check never sources. shiny::runApp()
-# sources it with only library(dundee) attached, so it sees exports and nothing
-# else -- while test_check() runs the suite INSIDE the package namespace, where
-# every internal resolves. That gap let a call to the unexported
-# dd_compare_spec() ship and fail on every group render.
+# inst/shiny/app.R is the one file R CMD check never sources, and runApp()
+# sources it with only library(dundee) attached -- exports and nothing else --
+# while the suite itself runs inside the package namespace, where every internal
+# resolves. So an app calling an unexported function passes every check and
+# fails on every group render. These tests close that gap from both sides.
 
 # Prefer the source tree, fall back to the installed copy: under dev-test.R the
 # repo is what matters, under R CMD check only the installed package exists.

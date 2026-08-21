@@ -47,13 +47,13 @@ cruft: ['@eaDir', '#recycle', '#snapshot', '@tmp', .@__thumb, '@sharebin',
 fingerprint_grid: 16
 
 # Maximum Hamming distance (inclusive) for two photos to be called near
-# duplicates. The scale follows fingerprint_grid: an N x N grid gives N^2 bits,
-# so the same distance is far tighter on a finer grid. At the default 16x16
-# (256 bits): 3 is very tight (re-saves, crops of a few pixels), and 20 is the
-# equivalent of the old 8x8 default of 5 -- both about 8% of the bit budget.
-# Scaling the rest of that guidance, 40+ starts merging different frames of the
-# same scene. Safe to change and re-run analyze: grouping is recomputed from
-# stored fingerprints.
+# duplicates. Read it as a fraction of the bit budget, not as an absolute: an
+# N x N grid gives N^2 bits, so the same number is far tighter on a finer grid.
+# At the default 16x16 (256 bits): 3 is very tight -- re-saves and crops of a
+# few pixels. Around 20 (~8% of the budget) is a normal near-duplicate setting,
+# and 40+ starts merging different frames of the same scene. Those two are
+# scaled guidance, not measurements. Safe to change and re-run analyze:
+# grouping is recomputed from stored fingerprints.
 hamming_threshold: 3
 
 # LSH bands used to block candidate pairs. Must divide fingerprint_grid^2.

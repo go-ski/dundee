@@ -1,6 +1,6 @@
-# Phase 3 no longer executes anything, which is what finally makes it testable:
-# there is no server side and no ssh to stub, so the script dundee generates can
-# simply be run against a temp library and checked against what moved.
+# dundee executes nothing in phase 3, which is what makes it testable: with no
+# server side and no ssh to stub, the generated script can simply be run against
+# a temp library and checked against what actually moved.
 
 move_store <- function(rel = c("a.jpg", "sub b/c.jpg", "café.jpg"),
                        preferred = c(TRUE, FALSE, TRUE)) {
@@ -63,10 +63,9 @@ test_that("dest mapping routes preferred and non-preferred correctly", {
 
 test_that("a destination outside library_root is rejected by name", {
   s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
-  # Exactly what an unmigrated config.yml still says. These keys used to hold
-  # server-side paths, so /volume1 on this machine is not a slower destination
-  # but a nonexistent one -- and left unchecked the plan would name 3 moves
-  # into a tree that cannot be created.
+  # A server-side path is not a slower destination on this machine but a
+  # nonexistent one, so unchecked the plan names 3 moves into a tree that
+  # cannot be created.
   s$cfg$preferred_root <- "/volume1/photo/_dedup/preferred"
   err <- expect_error(dd_require_move_config(s$cfg), "under library_root")
   expect_match(conditionMessage(err), "preferred_root", fixed = TRUE)
@@ -208,9 +207,8 @@ test_that("--include-preferred moves both tiers, and repeats cleanly", {
 test_that("one failure is recorded and the rest of the batch still moves", {
   skip_on_os("windows")
   # do_move captures each failure, records it and returns 0, which is what keeps
-  # the batch going -- the old script streamed to ssh with nobody watching, so
-  # stopping at the first error was right there. Let a failure propagate out of
-  # do_move instead and `set -e` ends the run with two photos unaccounted for.
+  # the batch going. Let a failure propagate out of it instead and `set -e` ends
+  # the run with two photos unaccounted for.
   s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   plan_quietly(s)
 
