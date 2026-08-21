@@ -23,6 +23,11 @@ move_store <- function(rel = c("a.jpg", "sub b/c.jpg", "café.jpg"),
                           pixel_hash, fingerprint)
        VALUES(?, ?, 10, 10, 10, 1, 'h', '0f0f0f0f0f0f0f0f')",
       params = list(p, rel[i]))
+    # Group membership too, not just the decision: dd_status() reads both, and
+    # a decided photo that belongs to no group cannot happen in a real store.
+    DBI::dbExecute(con,
+      "INSERT INTO groups(group_id, photo_id, tier) VALUES(1, ?, 'exact')",
+      params = list(i))
     DBI::dbExecute(con,
       "INSERT INTO decisions(photo_id, group_id, preferred, decided_by)
        VALUES(?, 1, ?, 'test')",
@@ -106,7 +111,9 @@ test_that("the script is one do_move row per planned photo, executable", {
   expect_equal(nrow(m), 3L)
 
   lines <- readLines(script_of(s), warn = FALSE, encoding = "UTF-8")
-  expect_equal(sum(grepl("^do_move ", lines)), 3L)
+  # Every row names its tier, so reading the script tells you what it will do.
+  expect_equal(sum(grepl("^move_preferred ", lines)), 2L)
+  expect_equal(sum(grepl("^move_nonpreferred ", lines)), 1L)
   expect_equal(as.character(file.mode(script_of(s))), "755")
   # The header must name where things are going: this file is meant to be read
   # before it is run.
@@ -130,11 +137,12 @@ test_that("awkward paths survive into the script as themselves", {
 test_that("re-planning discards the receipt of the plan it replaces", {
   s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   plan_quietly(s)
-  done <- file.path(s$cfg$work_dir, "moves.done.tsv")
-  writeLines("1\t/old\t/older\t2020-01-01T00:00:00", done)
+  logs <- file.path(s$cfg$work_dir,
+                    c("moves.done.tsv", "moves.failed.tsv", "moves.kept.tsv"))
+  for (f in logs) writeLines("1\t/old\t/older\t2020-01-01T00:00:00", f)
   plan_quietly(s)
-  # Left in place it would re-credit a photo that has since been moved back.
-  expect_false(file.exists(done))
+  # Left in place they would re-credit a photo that has since been moved back.
+  expect_false(any(file.exists(logs)))
 })
 
 # --- running it -------------------------------------------------------------
@@ -144,13 +152,14 @@ test_that("a dry run reports the work and touches nothing", {
   s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   plan_quietly(s)
 
-  r <- run_script(s, "--dry-run")
+  r <- run_script(s, c("--dry-run", "--include-preferred"))
   expect_equal(r$status, 0L)
   expect_match(r$out, "DRY RUN")
   expect_match(r$out, "3 to move, 0 already at destination")
   expect_true(all(file.exists(file.path(s$cfg$library_root, s$rel))))
   expect_false(dir.exists(s$cfg$preferred_root))
   expect_false(file.exists(file.path(s$cfg$work_dir, "moves.done.tsv")))
+  expect_false(file.exists(file.path(s$cfg$work_dir, "moves.kept.tsv")))
 })
 
 test_that("a dry run writes no failure log either", {
@@ -162,20 +171,21 @@ test_that("a dry run writes no failure log either", {
   dir.create(s$cfg$preferred_root, recursive = TRUE)
   file.create(file.path(s$cfg$preferred_root, "a.jpg"))
 
-  r <- run_script(s, "--dry-run")
+  r <- run_script(s, c("--dry-run", "--include-preferred"))
   expect_equal(r$status, 0L)
   expect_match(r$out, "1 blocked")
   expect_false(file.exists(file.path(s$cfg$work_dir, "moves.failed.tsv")))
 })
 
-test_that("a real run moves the files, writes a receipt, and repeats cleanly", {
+test_that("--include-preferred moves both tiers, and repeats cleanly", {
   skip_on_os("windows")
   s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   plan_quietly(s)
 
-  r <- run_script(s)
+  r <- run_script(s, "--include-preferred")
   expect_equal(r$status, 0L)
   expect_match(r$out, "3 moved, 0 already at destination")
+  expect_false(file.exists(file.path(s$cfg$work_dir, "moves.kept.tsv")))
 
   expect_false(any(file.exists(file.path(s$cfg$library_root, s$rel))))
   expect_true(file.exists(file.path(s$cfg$preferred_root, "a.jpg")))
@@ -189,7 +199,7 @@ test_that("a real run moves the files, writes a receipt, and repeats cleanly", {
                          character(1), 1L), c("1", "2", "3"))
 
   # Idempotent: sources gone, destinations there, nothing left to do.
-  r2 <- run_script(s)
+  r2 <- run_script(s, "--include-preferred")
   expect_equal(r2$status, 0L)
   expect_match(r2$out, "0 moved, 3 already at destination")
   expect_length(readLines(done, warn = FALSE), 3L)
@@ -209,7 +219,7 @@ test_that("one failure is recorded and the rest of the batch still moves", {
   dir.create(dirname(s$cfg$preferred_root), recursive = TRUE)
   writeLines("not a directory", s$cfg$preferred_root)
 
-  r <- run_script(s)
+  r <- run_script(s, "--include-preferred")
   expect_equal(r$status, 1L)
   expect_match(r$out, "2 failed")
 
@@ -230,7 +240,7 @@ test_that("the script refuses a library that is not mounted", {
   unlink(file.path(s$cfg$library_root, s$rel))
   unlink(file.path(s$cfg$library_root, "sub b"), recursive = TRUE)
 
-  r <- run_script(s)
+  r <- run_script(s, "--include-preferred")
   expect_equal(r$status, 1L)
   expect_match(r$out, "not mounted")
   expect_false(dir.exists(s$cfg$preferred_root))
@@ -245,7 +255,7 @@ test_that("the script refuses a read-only library, but rehearses on one", {
   skip_if(file.access(s$cfg$library_root, 2L) == 0L,
           "the library cannot be made read-only here")
 
-  r <- run_script(s)
+  r <- run_script(s, "--include-preferred")
   expect_equal(r$status, 1L)
   expect_match(r$out, "read-only")
   expect_match(r$out, "remount")
@@ -288,7 +298,7 @@ test_that("reconciling credits the receipt, then checks the library itself", {
   s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   plan_quietly(s)
   DBI::dbDisconnect(s$con)
-  run_script(s)
+  run_script(s, "--include-preferred")
 
   # Photo 2 is dropped from the receipt: it moved, but the script that says so
   # is not the only evidence available -- the library itself is.
@@ -299,8 +309,8 @@ test_that("reconciling credits the receipt, then checks the library itself", {
   writeLines(keep, done, useBytes = TRUE)
 
   msgs <- capture_messages(n <- dd_run_move(s$cfg, quiet = TRUE))
-  expect_equal(n, 3L)
-  expect_match(msgs, "records 2 of 3 planned", all = FALSE)
+  expect_equal(n, c(done = 3L, kept = 0L))
+  expect_match(msgs, "records 2 of 3 outstanding", all = FALSE)
   expect_match(msgs, "of the remaining 1: 1 moved", all = FALSE)
 
   s$con <- dd_db_connect(s$cfg)
@@ -319,7 +329,7 @@ test_that("a source gone with nothing at the destination stays planned", {
   unlink(file.path(s$cfg$library_root, "a.jpg"))
 
   msgs <- capture_messages(n <- dd_run_move(s$cfg, quiet = TRUE))
-  expect_equal(n, 0L)
+  expect_equal(unname(sum(n)), 0L)
   expect_match(msgs, "no moves.done.tsv", all = FALSE)
   expect_match(msgs, "1 source\\(s\\) gone with nothing at the destination",
                all = FALSE)
@@ -334,13 +344,149 @@ test_that("reconciling a second time has nothing left to do", {
   s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
   plan_quietly(s)
   DBI::dbDisconnect(s$con)
-  run_script(s)
+  run_script(s, "--include-preferred")
   suppressMessages(dd_run_move(s$cfg, quiet = TRUE))
 
   msgs <- capture_messages(n <- dd_run_move(s$cfg, quiet = TRUE))
-  expect_equal(n, 0L)
-  expect_match(msgs, "nothing planned", all = FALSE)
+  expect_equal(unname(sum(n)), 0L)
+  expect_match(msgs, "nothing outstanding", all = FALSE)
   s$con <- dd_db_connect(s$cfg)
   expect_equal(DBI::dbGetQuery(s$con,
     "SELECT COUNT(*) n FROM moves WHERE state = 'done'")$n, 3L)
+})
+
+# --- the default: only the rejects leave ------------------------------------
+
+test_that("a plain run moves the non-preferred out and leaves the winners", {
+  skip_on_os("windows")
+  # Quarantining the rejects is already a library without duplicates, and the
+  # folders the user knows stay as they were. The fixture is two preferred
+  # copies and one non-preferred.
+  s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  plan_quietly(s)
+
+  r <- run_script(s)
+  expect_equal(r$status, 0L)
+  expect_match(r$out, "1 moved")
+  expect_match(r$out, "2 preferred copy\\(ies\\) left in place")
+  expect_match(r$out, "--include-preferred", fixed = TRUE)
+
+  expect_true(file.exists(file.path(s$cfg$library_root, "a.jpg")))
+  expect_true(file.exists(file.path(s$cfg$library_root, "café.jpg")))
+  expect_false(dir.exists(s$cfg$preferred_root))
+  expect_true(file.exists(file.path(s$cfg$nonpreferred_root, "sub b/c.jpg")))
+
+  kept <- file.path(s$cfg$work_dir, "moves.kept.tsv")
+  expect_setequal(vapply(strsplit(readLines(kept, warn = FALSE,
+                                            encoding = "UTF-8"),
+                                  "\t", fixed = TRUE), `[`, character(1), 1L),
+                  c("1", "3"))
+  expect_length(readLines(file.path(s$cfg$work_dir, "moves.done.tsv"),
+                          warn = FALSE), 1L)
+})
+
+test_that("a dry run counts what would stay without writing the kept log", {
+  skip_on_os("windows")
+  s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  plan_quietly(s)
+
+  r <- run_script(s, "--dry-run")
+  expect_equal(r$status, 0L)
+  expect_match(r$out, "1 to move")
+  expect_match(r$out, "2 preferred copy\\(ies\\) would stay in place")
+  expect_false(file.exists(file.path(s$cfg$work_dir, "moves.kept.tsv")))
+  expect_true(all(file.exists(file.path(s$cfg$library_root, s$rel))))
+})
+
+test_that("an unrecognised flag exits 2 and says what the default is", {
+  skip_on_os("windows")
+  s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  plan_quietly(s)
+
+  r <- run_script(s, "--move-everything")
+  expect_equal(r$status, 2L)
+  expect_match(r$out, "usage:")
+  expect_match(r$out, "leave")
+})
+
+# --- kept, in the store -----------------------------------------------------
+
+test_that("reconciling a default run marks the winners kept, not done", {
+  skip_on_os("windows")
+  s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  plan_quietly(s)
+  DBI::dbDisconnect(s$con)
+  run_script(s)
+
+  msgs <- capture_messages(n <- dd_run_move(s$cfg, quiet = TRUE))
+  expect_equal(n, c(done = 1L, kept = 2L))
+  expect_match(msgs, "moves.kept.tsv records 2 left in place", all = FALSE)
+
+  s$con <- dd_db_connect(s$cfg)
+  st <- DBI::dbGetQuery(s$con, "SELECT photo_id, state FROM moves ORDER BY photo_id")
+  expect_equal(st$state, c("kept", "done", "kept"))
+
+  # And the project is no longer outstanding work.
+  out <- suppressMessages(dd_status(s$cfg))
+  expect_equal(c(out$planned, out$done, out$kept), c(0L, 1L, 2L))
+  expect_match(capture_messages(dd_status(s$cfg)), "next: nothing", all = FALSE)
+})
+
+test_that("a kept row becomes done once the winners are actually moved", {
+  skip_on_os("windows")
+  s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  plan_quietly(s)
+  DBI::dbDisconnect(s$con)
+  run_script(s)
+  suppressMessages(dd_run_move(s$cfg, quiet = TRUE))
+
+  # Changed your mind: relocate the winners too. kept must not be a dead end.
+  run_script(s, "--include-preferred")
+  n <- suppressMessages(dd_run_move(s$cfg, quiet = TRUE))
+  expect_equal(n, c(done = 2L, kept = 0L))
+
+  s$con <- dd_db_connect(s$cfg)
+  expect_equal(DBI::dbGetQuery(s$con,
+    "SELECT COUNT(*) n FROM moves WHERE state = 'done'")$n, 3L)
+  expect_true(file.exists(file.path(s$cfg$preferred_root, "café.jpg")))
+})
+
+test_that("a kept claim is verified against the library, not trusted", {
+  skip_on_os("windows")
+  # The kept log says a photo stayed put. If it is not at its source, it did
+  # not -- and the normal evidence check decides, exactly as for a move.
+  s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  plan_quietly(s)
+  DBI::dbDisconnect(s$con)
+  run_script(s)
+
+  # Photo 1 moved by hand after the script claimed it was left alone.
+  dir.create(s$cfg$preferred_root, recursive = TRUE)
+  file.rename(file.path(s$cfg$library_root, "a.jpg"),
+              file.path(s$cfg$preferred_root, "a.jpg"))
+
+  msgs <- capture_messages(n <- dd_run_move(s$cfg, quiet = TRUE))
+  expect_equal(n, c(done = 2L, kept = 1L))
+  expect_match(msgs, "1 of its rows moved after all", all = FALSE)
+
+  s$con <- dd_db_connect(s$cfg)
+  st <- DBI::dbGetQuery(s$con, "SELECT photo_id, state FROM moves ORDER BY photo_id")
+  expect_equal(st$state, c("done", "done", "kept"))
+})
+
+test_that("withdrawing a decision prunes its kept row", {
+  skip_on_os("windows")
+  s <- move_store(); on.exit(DBI::dbDisconnect(s$con), add = TRUE)
+  plan_quietly(s)
+  DBI::dbDisconnect(s$con)
+  run_script(s)
+  suppressMessages(dd_run_move(s$cfg, quiet = TRUE))
+
+  # A kept row records a decision not to move, not a move that happened, so it
+  # must not outlive the decision -- the same rule planned rows follow.
+  s$con <- dd_db_connect(s$cfg)
+  DBI::dbExecute(s$con, "DELETE FROM decisions WHERE photo_id = 1")
+  plan_quietly(s)
+  expect_equal(DBI::dbGetQuery(s$con,
+    "SELECT COUNT(*) n FROM moves WHERE photo_id = 1")$n, 0L)
 })

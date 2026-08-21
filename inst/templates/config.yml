@@ -93,6 +93,11 @@ review_cache: 100
 # directory; you remount the library read-write, run it, and then `move`
 # reconciles the store against what actually happened.
 #
+# A default run of moves.sh moves the non-preferred copies into
+# nonpreferred_root and leaves each group's preferred copy exactly where it is
+# -- which is already a library without duplicates. preferred_root is used only
+# when you run `moves.sh --include-preferred`.
+#
 # Both roots MUST be under library_root. A move within one mount is a rename --
 # instant, and no bytes cross the wire however large the photos. A move to
 # another volume would copy every duplicate down and delete the original.

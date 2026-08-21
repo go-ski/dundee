@@ -15,7 +15,7 @@ works with this list to produce duplicate groups using smart cluster analysis te
 
 ## **move**
 
-writes a shell script that moves the preferred and non-preferred copies into separate folders — inside the library, so each move is a rename rather than a copy — which you review and run yourself. dundee never touches the library; it reads back afterwards what actually happened. The two folders can later be moved elsewhere or deleted
+writes a shell script that moves the non-preferred copies out into a folder of their own — inside the library, so each move is a rename rather than a copy — which you review and run yourself. Each group's preferred copy stays exactly where it always was, which is already a library without duplicates; `--include-preferred` relocates those too if you want both tiers gathered. dundee never touches the library; it reads back afterwards what actually happened, and the quarantined folder can later be moved elsewhere or deleted
 
 ---
 
@@ -54,7 +54,8 @@ a photo already placed in an exact group is not considered for the near tier.
 The Shiny app compares the copies in a group and records the preferred one.
 Move writes a shell script of guarded `mv` commands and stops there; you review
 it, remount the library read-write and run it, and `dundee move` reads back what
-happened — marking first, moving second, deleting never.
+happened — marking first, moving second, deleting never. By default only the
+rejects move.
 
 ### Reviewing a group
 
@@ -182,8 +183,8 @@ dd_app()                             # opens the Shiny review app
 # Phase 3 — write the move script, run it yourself, then reconcile
 dd_run_plan(bulk = TRUE)             # writes moves.tsv + moves.sh
 # ... review moves.sh, remount the library read-write, and:
-#       bash <work_dir>/moves.sh --dry-run
-#       bash <work_dir>/moves.sh
+#       bash <work_dir>/moves.sh --dry-run   # rehearse
+#       bash <work_dir>/moves.sh             # rejects out, winners stay put
 dd_run_move()                        # reads back what actually moved
 ```
 
@@ -220,7 +221,7 @@ checkout; installed and symlinked (see Requirements) it is just `dundee`:
 # Phase 3 — write the move script, run it yourself, then reconcile
 ./exec/dundee plan ~/dundee/family-photos --bulk   # writes moves.tsv + moves.sh
 bash ~/dundee/family-photos/moves.sh --dry-run     # rehearse; touches nothing
-bash ~/dundee/family-photos/moves.sh               # perform the moves
+bash ~/dundee/family-photos/moves.sh               # move the non-preferred out
 ./exec/dundee move ~/dundee/family-photos          # reconcile the store
 ```
 
@@ -257,8 +258,10 @@ Every stage is idempotent and re-runnable.
   planned, so dundee stops relocating photos it no longer calls duplicates.
   That discards a manual choice too, since the group it described is gone;
   moves already marked done are history and are kept.
-- The generated **move** script guards every move with `[ -e source ]` and uses
-  `mv -n`, so an interrupted run can simply be repeated. It refuses to start
+- The generated **move** script moves only the non-preferred copies unless you
+  pass `--include-preferred`, so the default run leaves each group's winner
+  exactly where it has always been. It guards every move with `[ -e source ]`
+  and uses `mv -n`, so an interrupted run can simply be repeated. It refuses to start
   unless the library is mounted, non-empty and writable, and it records one
   failure without abandoning the rest of the batch. dundee itself never writes
   to the library at any phase, including this one.
@@ -278,7 +281,8 @@ Every stage is idempotent and re-runnable.
   originals/            review-app full-size cache (bounded by review_cache)
   moves.tsv  moves.sh   Phase 3 plan, and the script you run
   moves.done.tsv        what the script moved; read by `move` (with
-  moves.failed.tsv      anything that failed, and why)
+  moves.failed.tsv      anything that failed, and why, and
+  moves.kept.tsv        the preferred copies it left in place)
 ```
 
 ## Key configuration
@@ -322,7 +326,9 @@ Everything else is tuning, not paths:
   (default 100). Budget for it: 100 JPEGs is roughly 300 MB, but 100 TIFF or RAW
   copies can approach 1 GB. `0` disables the viewer's cache; nothing else
   depends on it, and `dd_cache_clear()` empties it at any time.
-- `preferred_root` / `nonpreferred_root` — the two output trees. **Both must be
+- `preferred_root` / `nonpreferred_root` — the two output trees.
+  `nonpreferred_root` is where a default run puts the rejects; `preferred_root`
+  is used only when you run `moves.sh --include-preferred`. **Both must be
   under `library_root`**, and `plan` refuses otherwise: a move within one mount
   is a rename, instant and with no bytes crossing the wire, while a move to
   another volume copies every duplicate down and deletes the original. Relative

@@ -72,8 +72,13 @@ dd_move_script_header <- function(cfg, n) {
     "# destination share one mount, so each move is a rename: no bytes are",
     "# copied, however large the photo.",
     "#",
-    "#   bash moves.sh --dry-run    rehearse; touches nothing",
-    "#   bash moves.sh              perform the moves",
+    "#   bash moves.sh --dry-run              rehearse; touches nothing",
+    "#   bash moves.sh                        move the non-preferred copies out",
+    "#   bash moves.sh --include-preferred    also relocate the preferred copies",
+    "#",
+    "# By default each group's preferred copy stays exactly where it is. That is",
+    "# already a library without duplicates: only the rejects are quarantined,",
+    "# and the folders you know are untouched.",
     "#",
     "# The library is normally mounted read-only, and this script will refuse to",
     "# run until it is writable. Remount it read-write first, and consider",
@@ -81,7 +86,8 @@ dd_move_script_header <- function(cfg, n) {
     "#",
     "# Re-runnable: a move whose source is already gone is counted and skipped,",
     "# and mv -n never overwrites. Completed moves are appended to",
-    "# moves.done.tsv beside this script, failures to moves.failed.tsv.",
+    "# moves.done.tsv beside this script, failures to moves.failed.tsv, and",
+    "# preferred copies left alone to moves.kept.tsv.",
     "",
     "set -euo pipefail",
     "",
@@ -89,13 +95,23 @@ dd_move_script_header <- function(cfg, n) {
     sprintf("library=%s", dd_shq(lib)),
     'done_log="$here/moves.done.tsv"',
     'fail_log="$here/moves.failed.tsv"',
+    'kept_log="$here/moves.kept.tsv"',
     "",
+    '# A loop, not a case on $1: the two flags have to compose.',
     'dry=no',
-    'case "${1-}" in',
-    '  --dry-run) dry=yes ;;',
-    '  "") ;;',
-    '  *) printf \'usage: %s [--dry-run]\\n\' "$0" >&2; exit 2 ;;',
-    'esac',
+    'include_preferred=no',
+    'while [[ "$#" -gt 0 ]]; do',
+    '  case "$1" in',
+    '    --dry-run) dry=yes ;;',
+    '    --include-preferred) include_preferred=yes ;;',
+    '    *)',
+    '      printf \'usage: %s [--dry-run] [--include-preferred]\\n\' "$0" >&2',
+    '      printf \'  default: move the non-preferred copies out and leave\\n\' >&2',
+    '      printf \'           each group\'"\'"\'s preferred copy where it is\\n\' >&2',
+    '      exit 2 ;;',
+    '  esac',
+    '  shift',
+    'done',
     "",
     '# Preflight, before anything moves.',
     'if [[ ! -d "$library" ]]; then',
@@ -117,7 +133,7 @@ dd_move_script_header <- function(cfg, n) {
     'fi',
     "",
     'stamp="$(date -u +%Y-%m-%dT%H:%M:%S)"',
-    'moved=0; already=0; missing=0; failed=0; shown=0',
+    'moved=0; already=0; missing=0; failed=0; kept=0; shown=0',
     "",
     'do_move() {',
     '  local id="$1" src="$2" dest="$3" err',
@@ -164,6 +180,23 @@ dd_move_script_header <- function(cfg, n) {
     '  moved=$((moved + 1))',
     '}',
     "",
+    '# The two tiers, named so that every row below says which it is.',
+    'move_nonpreferred() { do_move "$@"; }',
+    "",
+    'move_preferred() {',
+    '  # Pulling the rejects out is already a library without duplicates, so the',
+    '  # winner stays put unless asked otherwise. Recorded either way: dundee has',
+    '  # no other way to tell "left alone on purpose" from "did not move".',
+    '  if [[ "$include_preferred" == no ]]; then',
+    '    kept=$((kept + 1))',
+    '    if [[ "$dry" == no ]]; then',
+    '      printf \'%s\\t%s\\t%s\\t%s\\n\' "$1" "$2" "$3" "$stamp" >> "$kept_log"',
+    '    fi',
+    '    return 0',
+    '  fi',
+    '  do_move "$@"',
+    '}',
+    "",
     'if [[ "$dry" == yes ]]; then printf \'DRY RUN - nothing will be moved.\\n\\n\'; fi',
     ""
   )
@@ -179,12 +212,19 @@ dd_move_script_footer <- function(cfg) {
     '  printf \'\\n%d to move, %d already at destination, %d source(s) missing, \' \\',
     '         "$moved" "$already" "$missing"',
     '  printf \'%d blocked.\\n\' "$failed"',
+    '  if [[ "$kept" -gt 0 ]]; then',
+    '    printf \'%d preferred copy(ies) would stay in place.\\n\' "$kept"',
+    '  fi',
     '  printf \'Nothing was moved. Re-run without --dry-run to perform them.\\n\'',
     '  exit 0',
     'fi',
     'printf \'%d moved, %d already at destination, %d source(s) missing, \' \\',
     '       "$moved" "$already" "$missing"',
     'printf \'%d failed.\\n\' "$failed"',
+    'if [[ "$kept" -gt 0 ]]; then',
+    '  printf \'%d preferred copy(ies) left in place.\\n\' "$kept"',
+    '  printf \'  (pass --include-preferred to relocate those too)\\n\'',
+    'fi',
     'printf \'receipt: %s\\n\' "$done_log"',
     'if [[ "$failed" -gt 0 ]]; then printf \'failures: %s\\n\' "$fail_log"; fi',
     sprintf("printf 'next: dundee move %%s\\n' %s",
@@ -220,11 +260,13 @@ dd_plan_moves <- function(con, cfg,
     SELECT d.photo_id, d.preferred, p.path, p.rel_path
       FROM decisions d JOIN photos p USING (photo_id)
   ")
-  # Drop still-planned rows whose decision has since been withdrawn; the upsert
-  # below only ever adds or updates, so without this they linger and inflate
-  # dd_status(). Rows already marked done are history and stay.
+  # Drop rows whose decision has since been withdrawn; the upsert below only
+  # ever adds or updates, so without this they linger and inflate dd_status().
+  # 'kept' goes with 'planned': it records a decision not to move, not a move
+  # that happened, so it must not outlive the decision that produced it. Rows
+  # already marked done are history and stay.
   DBI::dbExecute(con, "DELETE FROM moves
-                        WHERE state = 'planned'
+                        WHERE state IN ('planned', 'kept')
                           AND photo_id NOT IN (SELECT photo_id FROM decisions)")
   if (nrow(dec) == 0L) {
     message("No decisions to plan.")
@@ -253,7 +295,10 @@ dd_plan_moves <- function(con, cfg,
   pb <- dd_progress(nrow(manifest), "plan", quiet = quiet)
   rows <- character(nrow(manifest))
   for (i in seq_len(nrow(manifest))) {
-    rows[i] <- sprintf("do_move %d %s %s", manifest$photo_id[i],
+    rows[i] <- sprintf("%s %d %s %s",
+                       if (manifest$preferred[i] == 1L) "move_preferred   "
+                       else "move_nonpreferred",
+                       manifest$photo_id[i],
                        dd_shq(manifest$src[i]), dd_shq(manifest$dest[i]))
     pb$tick()
   }
@@ -267,7 +312,7 @@ dd_plan_moves <- function(con, cfg,
   # The receipts describe the plan being replaced. Left in place, a stale one
   # would re-credit a photo that has since been moved back.
   unlink(file.path(dirname(script_path),
-                   c("moves.done.tsv", "moves.failed.tsv")))
+                   c("moves.done.tsv", "moves.failed.tsv", "moves.kept.tsv")))
 
   # Record planned rows (idempotent upsert).
   dd_upsert(con, "moves",
@@ -276,7 +321,15 @@ dd_plan_moves <- function(con, cfg,
                        moved_at = NA_character_, stringsAsFactors = FALSE),
             key_cols = "photo_id")
 
-  message(sprintf("Planned %d moves -> %s (script: %s)",
-                  nrow(manifest), manifest_path, script_path))
+  npref <- sum(manifest$preferred == 1L)
+  message(sprintf("Planned %d moves (%d non-preferred, %d preferred) -> %s",
+                  nrow(manifest), nrow(manifest) - npref, npref, manifest_path))
+  message(sprintf("  script: %s", script_path))
+  if (npref > 0L) {
+    message("  running it moves the non-preferred copies out and leaves the ",
+            "preferred
+  ones where they are; --include-preferred relocates ",
+            "those too.")
+  }
   invisible(manifest)
 }

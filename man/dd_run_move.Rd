@@ -12,7 +12,7 @@ dd_run_move(config = NULL, quiet = FALSE)
 \item{quiet}{Logical; suppress the phase banner.}
 }
 \value{
-The number of moves marked done, invisibly.
+Invisibly, a named integer vector: \code{done} and \code{kept} counts.
 }
 \description{
 dundee does not move anything: \code{\link[=dd_run_plan]{dd_run_plan()}} writes \code{moves.sh} and you run
@@ -26,6 +26,12 @@ A photo counts as moved when its source is gone \emph{and} its destination is
 there. A source that has vanished with nothing at the destination is
 reported and left planned: something other than the move script removed it,
 and calling that done would hide it.
+
+By default \code{moves.sh} leaves each group's preferred copy where it is, and
+records those in \code{moves.kept.tsv}. They are marked \code{kept} rather than \code{done}
+-- no move happened -- but they no longer count as outstanding work. Running
+the script again with \code{--include-preferred} moves them for real, and a second
+reconcile turns \code{kept} into \code{done}.
 }
 \examples{
 \dontrun{

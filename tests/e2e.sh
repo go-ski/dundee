@@ -47,7 +47,7 @@ cat "$inv_err" >&2
 # --- assertions ---
 db="$WORK/e2e.sqlite"
 ngroups=$(sqlite3 "$db" "SELECT COUNT(DISTINCT group_id) FROM groups;")
-nmoves=$(grep -c '^do_move ' "$WORK/moves.sh" || true)
+nmoves=$(grep -cE '^move_(non)?preferred +[0-9]' "$WORK/moves.sh" || true)
 echo "groups=$ngroups moves=$nmoves"
 
 fail=0
@@ -113,37 +113,65 @@ mv "$WORK/config.yml.bak" "$WORK/config.yml"
 # would. It has to come after the "library was written to" check above: the
 # library IS written to here, by this script, which is exactly the distinction
 # that assertion exists to draw.
+# Both tiers are represented (2 groups, one winner each), which is what makes
+# the default -- move the rejects, leave the winners -- worth testing here.
+nnon=$(grep -c '^move_nonpreferred ' "$WORK/moves.sh" || true)
+npref=$(grep -c '^move_preferred ' "$WORK/moves.sh" || true)
+chk "$((nnon + npref))" "$nmoves" "tiered rows cover the plan"
+[ "$nnon" -gt 0 ] && [ "$npref" -gt 0 ] ||
+  { echo "FAIL: fixture does not exercise both tiers"; fail=1; }
+
 "$WORK/moves.sh" --dry-run > "$TOP/dry.out" 2>&1 ||
   { echo "FAIL: dry run exited non-zero"; cat "$TOP/dry.out"; fail=1; }
 grep -q "DRY RUN" "$TOP/dry.out" || { echo "FAIL: dry run not announced"; fail=1; }
-grep -q "^${nmoves} to move" "$TOP/dry.out" ||
+grep -q "^${nnon} to move" "$TOP/dry.out" ||
   { echo "FAIL: dry run miscounted"; cat "$TOP/dry.out"; fail=1; }
 [ -e "$FX/_dedup" ] && { echo "FAIL: dry run created the destination"; fail=1; }
 
+# Default run: the rejects leave, the winners stay exactly where they were.
 "$WORK/moves.sh" > "$TOP/move.out" 2>&1 ||
   { echo "FAIL: move script exited non-zero"; cat "$TOP/move.out"; fail=1; }
-grep -q "^${nmoves} moved" "$TOP/move.out" ||
+grep -q "^${nnon} moved" "$TOP/move.out" ||
   { echo "FAIL: move miscounted"; cat "$TOP/move.out"; fail=1; }
+grep -q "^${npref} preferred copy(ies) left in place" "$TOP/move.out" ||
+  { echo "FAIL: kept count not reported"; cat "$TOP/move.out"; fail=1; }
+[ -d "$FX/_dedup/preferred" ] &&
+  { echo "FAIL: default run touched the preferred copies"; fail=1; }
 [ -f "$WORK/moves.done.tsv" ] || { echo "FAIL: no receipt written"; fail=1; }
 nreceipt=$(wc -l < "$WORK/moves.done.tsv" | tr -d ' ')
-chk "$nreceipt" "$nmoves" "receipt row count"
-# The spaced path is the one most likely to have been split by the shell.
-[ -f "$FX/_dedup/preferred/sub a/img1 dup.jpg" ] ||
-  [ -f "$FX/_dedup/non-preferred/sub a/img1 dup.jpg" ] ||
-  { echo "FAIL: spaced path did not land"; fail=1; }
+chk "$nreceipt" "$nnon" "receipt row count"
+chk "$(wc -l < "$WORK/moves.kept.tsv" | tr -d ' ')" "$npref" "kept row count"
 nleft=$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'planned';")
 
-# Reconcile: dundee reads the receipt and checks the library, and touches
-# neither. Re-running it must be a no-op.
+# Reconcile: dundee reads the receipts and checks the library, writing to
+# neither.
 ./exec/dundee move "$WORK" --quiet > "$TOP/recon.out" 2>&1 ||
   { echo "FAIL: move reconcile failed"; cat "$TOP/recon.out"; fail=1; }
 chk "$nleft" "$nmoves" "planned before reconcile"
-ndone=$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'done';")
-nplanned=$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'planned';")
-chk "$ndone"    "$nmoves" "moves marked done"
-chk "$nplanned" 0         "moves left planned"
+chk "$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'done';")" \
+    "$nnon"  "moves marked done"
+chk "$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'kept';")" \
+    "$npref" "winners marked kept"
+chk "$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'planned';")" \
+    0        "moves left planned"
 # dd_status() reports through message(), so stderr is where it lands.
 ./exec/dundee status "$WORK" 2>&1 | grep -q "next: nothing" ||
   { echo "FAIL: status still recommends work"; fail=1; }
+
+# kept must not be a dead end: relocating the winners later resolves them.
+"$WORK/moves.sh" --include-preferred > "$TOP/move2.out" 2>&1 ||
+  { echo "FAIL: --include-preferred exited non-zero"; cat "$TOP/move2.out"; fail=1; }
+./exec/dundee move "$WORK" --quiet > "$TOP/recon2.out" 2>&1 ||
+  { echo "FAIL: second reconcile failed"; cat "$TOP/recon2.out"; fail=1; }
+chk "$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'done';")" \
+    "$nmoves" "all moves done after --include-preferred"
+chk "$(sqlite3 "$db" "SELECT COUNT(*) FROM moves WHERE state = 'kept';")" \
+    0         "no kept rows left"
+# The spaced path is the one most likely to have been split by the shell. Its
+# tier is whatever the preference rules chose, so check it only now that both
+# have run.
+[ -f "$FX/_dedup/preferred/sub a/img1 dup.jpg" ] ||
+  [ -f "$FX/_dedup/non-preferred/sub a/img1 dup.jpg" ] ||
+  { echo "FAIL: spaced path did not land"; fail=1; }
 
 if [ "$fail" -eq 0 ]; then echo "e2e: PASS"; else echo "e2e: FAIL"; exit 1; fi

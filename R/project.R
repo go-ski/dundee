@@ -663,6 +663,9 @@ dd_status <- function(config = NULL) {
     decided = n("SELECT COUNT(*) FROM decisions"),
     planned = n("SELECT COUNT(*) FROM moves WHERE state = 'planned'"),
     done    = n("SELECT COUNT(*) FROM moves WHERE state = 'done'"),
+    # Preferred copies moves.sh deliberately left where they were. Not done --
+    # nothing moved -- but not outstanding work either.
+    kept    = n("SELECT COUNT(*) FROM moves WHERE state = 'kept'"),
     # NULL, not 0: the fingerprint worker leaves meta_count empty when it could
     # not read a photo's metadata at all, which is not the same as a photo that
     # carries none. Only the former is worth reporting.
@@ -670,9 +673,9 @@ dd_status <- function(config = NULL) {
   )
   message(sprintf(
     paste("  photos %d (%d unreadable) | groups %d covering %d |",
-          "decided %d | moves %d planned, %d done"),
+          "decided %d | moves %d planned, %d done, %d kept"),
     out$photos, out$errors, out$groups, out$grouped, out$decided,
-    out$planned, out$done))
+    out$planned, out$done, out$kept))
   if (out$unread > 0L) {
     message(sprintf(
       "  metadata unreadable for %d photo(s); max_meta cannot rank them",
@@ -684,7 +687,8 @@ dd_status <- function(config = NULL) {
   nxt <- if (out$photos == 0L) "dd_run_inventory()" else
     if (out$groups == 0L) "dd_run_analyze()" else
       if (out$decided < out$grouped) "dd_app()  # review remaining groups" else
-        if (out$planned == 0L && out$done == 0L) "dd_run_plan(bulk = TRUE)" else
+        if (out$planned == 0L && out$done == 0L && out$kept == 0L)
+          "dd_run_plan(bulk = TRUE)" else
           if (out$planned > 0L) "run moves.sh, then dd_run_move()" else "nothing"
 
   if (nrow(dr)) {

@@ -2,6 +2,22 @@
 
 ## dundee 0.1.0 Phase 3 is a script you run
 
+* **`moves.sh` now moves only the non-preferred copies by default** -- a bare
+  run relocates fewer files than it did. Quarantining the rejects is already a
+  library without duplicates, and leaving each group's winner where it has
+  always been keeps the folder structure you know. `--include-preferred`
+  gathers both tiers as before. Rows in the generated script call
+  `move_nonpreferred` or `move_preferred`, so the tier is visible on every line
+  of a file whose purpose is being read before it is run.
+
+* **A third move state, `kept`.** A preferred copy deliberately left in place is
+  neither done nor outstanding: the script records it in `moves.kept.tsv` and
+  `dd_run_move()` marks it `kept`, so `dd_status()` reports it and stops
+  recommending work. It is not a dead end -- re-running with
+  `--include-preferred` moves those files for real and a second reconcile turns
+  `kept` into `done`. The claim is verified rather than trusted, as a move is: a
+  kept row is credited only while its source is still there.
+
 * **dundee no longer moves anything, and no longer logs in anywhere.**
   `dd_run_move()` used to stream the generated script to the NAS
   (`ssh user@host 'bash -s' < moves.sh`) after a mock run that only R could

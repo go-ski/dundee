@@ -400,9 +400,15 @@ dd_move_receipt <- function(path) {
 #' reported and left planned: something other than the move script removed it,
 #' and calling that done would hide it.
 #'
+#' By default `moves.sh` leaves each group's preferred copy where it is, and
+#' records those in `moves.kept.tsv`. They are marked `kept` rather than `done`
+#' -- no move happened -- but they no longer count as outstanding work. Running
+#' the script again with `--include-preferred` moves them for real, and a second
+#' reconcile turns `kept` into `done`.
+#'
 #' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param quiet Logical; suppress the phase banner.
-#' @return The number of moves marked done, invisibly.
+#' @return Invisibly, a named integer vector: `done` and `kept` counts.
 #' @examples
 #' \dontrun{
 #' dd_run_plan(bulk = TRUE)   # writes moves.sh
@@ -422,31 +428,47 @@ dd_run_move <- function(config = NULL, quiet = FALSE) {
          ". Run dd_run_plan() first.", call. = FALSE)
   }
   receipt <- file.path(cfg$work_dir, "moves.done.tsv")
+  kept_log <- file.path(cfg$work_dir, "moves.kept.tsv")
 
   n <- dd_with_con(cfg, function(con) {
-    planned <- DBI::dbGetQuery(con, "SELECT photo_id, src, dest FROM moves
-                                      WHERE state = 'planned'")
-    if (nrow(planned) == 0L) {
-      message("move: nothing planned; ",
-              if (file.exists(script)) "moves.sh has already been reconciled."
-              else "run dd_run_plan() first.")
-      return(0L)
+    # 'kept' rows are re-examined too: a later --include-preferred run moves
+    # them for real, and that has to be able to reach the store.
+    open_rows <- DBI::dbGetQuery(con, "SELECT photo_id, src, dest FROM moves
+                                        WHERE state IN ('planned', 'kept')")
+    if (nrow(open_rows) == 0L) {
+      message("move: nothing outstanding; moves.sh has already been reconciled.")
+      return(c(done = 0L, kept = 0L))
     }
-    from_receipt <- intersect(dd_move_receipt(receipt), planned$photo_id)
+    from_receipt <- intersect(dd_move_receipt(receipt), open_rows$photo_id)
     message(sprintf("move: %s", if (file.exists(receipt))
-      sprintf("moves.done.tsv records %d of %d planned move(s)",
-              length(from_receipt), nrow(planned))
+      sprintf("moves.done.tsv records %d of %d outstanding move(s)",
+              length(from_receipt), nrow(open_rows))
       else "no moves.done.tsv; checking the library directly"))
 
-    rest <- planned[!planned$photo_id %in% from_receipt, , drop = FALSE]
+    # A photo kept in one run and moved in the next appears in both logs, and
+    # moved must win. The claim is then verified rather than trusted, the same
+    # way a move is: a kept photo is one still sitting at its source.
+    claimed_kept <- setdiff(intersect(dd_move_receipt(kept_log),
+                                      open_rows$photo_id), from_receipt)
+    kept_src <- open_rows$src[match(claimed_kept, open_rows$photo_id)]
+    keep_ids <- claimed_kept[file.exists(kept_src)]
+    if (length(claimed_kept)) {
+      message(sprintf("      moves.kept.tsv records %d left in place%s",
+                      length(keep_ids),
+                      if (length(keep_ids) < length(claimed_kept))
+                        sprintf(" (%d of its rows moved after all)",
+                                length(claimed_kept) - length(keep_ids)) else ""))
+    }
+
+    rest <- open_rows[!open_rows$photo_id %in% c(from_receipt, keep_ids), ,
+                      drop = FALSE]
     gone <- !file.exists(rest$src)
     landed <- file.exists(rest$dest)
     by_check <- rest$photo_id[gone & landed]
     vanished <- rest$photo_id[gone & !landed]
     if (nrow(rest)) {
       message(sprintf("      of the remaining %d: %d moved, %d still in place",
-                      nrow(rest), length(by_check),
-                      sum(!gone)))
+                      nrow(rest), length(by_check), sum(!gone)))
     }
     if (length(vanished)) {
       message(sprintf(paste("      %d source(s) gone with nothing at the",
@@ -454,17 +476,26 @@ dd_run_move <- function(config = NULL, quiet = FALSE) {
       for (p in utils::head(rest$src[gone & !landed], 3L)) message("        ", p)
     }
 
-    ids <- c(from_receipt, by_check)
-    if (!length(ids)) return(0L)
-    DBI::dbExecute(con, sprintf(
-      "UPDATE moves SET state = 'done', moved_at = ?
-        WHERE state = 'planned' AND photo_id IN (%s)",
-      paste(rep("?", length(ids)), collapse = ",")),
-      params = c(list(format(Sys.time(), "%Y-%m-%dT%H:%M:%S")),
-                 as.list(as.integer(ids))))
+    mark <- function(ids, state) {
+      if (!length(ids)) return(0L)
+      DBI::dbExecute(con, sprintf(
+        "UPDATE moves SET state = ?, moved_at = ?
+          WHERE state IN ('planned', 'kept') AND photo_id IN (%s)",
+        paste(rep("?", length(ids)), collapse = ",")),
+        params = c(list(state, format(Sys.time(), "%Y-%m-%dT%H:%M:%S")),
+                   as.list(as.integer(ids))))
+    }
+    c(done = mark(c(from_receipt, by_check), "done"),
+      kept = mark(keep_ids, "kept"))
   })
-  if (n > 0L) message(sprintf("move: marked %d move(s) done", n))
-  else message("move: nothing to mark done.")
+  if (sum(n) > 0L) {
+    message(sprintf("move: marked %d done%s", n[["done"]],
+                    if (n[["kept"]] > 0L)
+                      sprintf(", %d kept (preferred, left in place)",
+                              n[["kept"]]) else ""))
+  } else {
+    message("move: nothing to mark.")
+  }
   invisible(n)
 }
 
