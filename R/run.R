@@ -290,6 +290,97 @@ dd_run_analyze <- function(config = NULL, quiet = FALSE) {
   invisible(out)
 }
 
+# Right-align a numeric column under its header, so the eye can compare counts
+# down the column rather than reading each one.
+dd_col <- function(x, head) {
+  x <- as.character(x)
+  w <- max(nchar(head), nchar(x))
+  list(head = formatC(head, width = w), body = formatC(x, width = w))
+}
+
+#' Report duplicate groups summarised by the directories they span.
+#'
+#' Prints the [dd_folder_patterns()] table, and with `effect = TRUE` the
+#' [dd_folder_effect()] audit of the config's `folder_priority`. Reads only.
+#'
+#' @param config A work directory, a config path, or a list from [dd_config()].
+#' @param depth Path segments to keep from each `rel_path`.
+#' @param effect Logical; also audit `folder_priority` against the current
+#'   `preference_rules`.
+#' @param quiet Logical; suppress the printed report. Unlike the other
+#'   `dd_run_*()` stages, whose `quiet` drops only banners and progress, here
+#'   the report *is* the output -- so this silences everything and leaves the
+#'   return value to work with. Errors are still raised.
+#' @return Invisibly, a list with `patterns` and (when asked) `effect`.
+#' @examples
+#' \dontrun{
+#' dd_run_folders()                       # groups summarised by directory
+#' dd_run_folders(depth = 2)              # look inside single-directory patterns
+#' dd_run_folders(effect = TRUE)          # audit folder_priority before applying
+#'
+#' pat <- dd_run_folders(quiet = TRUE)$patterns   # the table, nothing printed
+#' }
+#' @export
+dd_run_folders <- function(config = NULL, depth = 1L, effect = FALSE,
+                           quiet = FALSE) {
+  cfg <- dd_as_config(config)
+  say <- function(...) if (!isTRUE(quiet)) message(...)
+  dd_with_con(cfg, function(con) {
+    pat <- dd_folder_patterns(con, depth)
+    if (nrow(pat) == 0L) {
+      # Unconditional: quiet suppresses output, not failure.
+      stop("dundee: nothing is grouped yet; run analyze first.", call. = FALSE)
+    }
+    ng <- dd_col(pat$n_groups, "groups")
+    np <- dd_col(pat$n_photos, "photos")
+    sp <- dd_col(pat$spans, "dirs")
+    say(sprintf("%s %s %s  %s", ng$head, np$head, sp$head, "pattern"))
+    for (i in seq_len(nrow(pat))) {
+      say(sprintf("%s %s %s  %s", ng$body[i], np$body[i], sp$body[i],
+                  pat$pattern[i]))
+    }
+    one <- pat$spans == 1L
+    say(sprintf("  %d pattern(s) over %d group(s)",
+                nrow(pat), sum(pat$n_groups)))
+    if (any(one)) {
+      # Phrased without a flag spelling: this runs from R and from the shell,
+      # where the same knob is depth = 2 and --depth=2.
+      say(sprintf(
+        "  %d of them, %d group(s), span one directory: folder_priority cannot%s",
+        sum(one), sum(pat$n_groups[one]),
+        if (depth < 3L) sprintf(" decide those (try depth %d)", depth + 1L)
+        else " decide those"))
+    }
+
+    eff <- NULL
+    if (isTRUE(effect)) {
+      if (!length(cfg$folder_priority)) {
+        say("\n  the audit needs folder_priority set in config.yml ",
+            "(most-preferred folder first).")
+      } else {
+        eff <- dd_folder_effect(con, cfg, depth = depth, quiet = quiet)
+        say(sprintf(
+          "\n  folder_priority decides %d of %d group(s); %d fall through to %s",
+          eff$by_folder, eff$n_groups, eff$tied,
+          paste(cfg$preference_rules, collapse = ", ")))
+        nd <- nrow(eff$differs)
+        say(sprintf("  %d group(s) would be decided DIFFERENTLY than %s",
+                    nd, "preference_rules decides them today"))
+        if (nd > 0L) {
+          say("  the first few, folder winner then current winner:")
+          for (i in seq_len(min(5L, nd))) {
+            say("    + ", eff$differs$folder_winner[i])
+            say("    - ", eff$differs$rules_winner[i])
+          }
+          say("  to apply: put folder_priority first in preference_rules, ",
+              "then\n    dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)")
+        }
+      }
+    }
+    invisible(list(patterns = pat, effect = eff))
+  })
+}
+
 #' Launch the Shiny review app.
 #'
 #' The config is resolved to absolute paths before launching, because
@@ -542,6 +633,7 @@ dd_cli_opts <- list(
   preflight = "--quiet",
   inventory = c("--parallel", "--rebase", "--quiet"),
   analyze   = "--quiet",
+  folders   = c("--depth", "--effect"),
   app       = c("--port", "--no-browser"),
   plan      = c("--bulk", "--quiet"),
   move      = "--quiet"
@@ -559,6 +651,7 @@ dd_cli_usage <- function() {
     "  preflight [--quiet]                  check external tools and R packages",
     "  inventory [work_dir] [--parallel=N] [--rebase] [--quiet]",
     "  analyze   [work_dir] [--quiet]",
+    "  folders   [work_dir] [--depth=N] [--effect]",
     "  app       [work_dir] [--port=N] [--no-browser]",
     "  plan      [work_dir] [--bulk] [--quiet]",
     "  move      [work_dir] [--quiet]",
@@ -651,6 +744,9 @@ dd_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
                                  quiet = quiet,
                                  rebase = dd_has_flag(f, "rebase")),
     analyze   = dd_run_analyze(work, quiet = quiet),
+    folders   = dd_run_folders(work,
+                               depth = as.integer(dd_flag_value(f, "depth", 1L)),
+                               effect = dd_has_flag(f, "effect")),
     app       = dd_app(work, port = as.integer(dd_flag_value(f, "port", 7654L)),
                        launch_browser = !dd_has_flag(f, "no-browser")),
     plan      = dd_run_plan(work, bulk = dd_has_flag(f, "bulk"), quiet = quiet),

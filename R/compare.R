@@ -287,12 +287,9 @@ dd_fmt_field <- function(field, v) {
 # dd_choose_preferred()'s convention (R/decide.R).
 dd_rule_score <- function(rule, g, cfg) {
   if (identical(rule, "folder_priority")) {
-    pri <- vapply(g$rel_path, function(p) {
-      hit <- which(vapply(cfg$folder_priority,
-                          function(f) startsWith(p, f), logical(1)))
-      if (length(hit)) min(hit) else length(cfg$folder_priority) + 1L
-    }, numeric(1))
-    return(-pri)                      # smaller priority index = better
+    # Negated: smaller priority index = better, and this function's contract is
+    # larger = more preferred.
+    return(-as.numeric(dd_folder_rank(g$rel_path, cfg$folder_priority)))
   }
   sc <- dd_pref_scorers[[rule]]
   if (is.null(sc)) return(NULL)

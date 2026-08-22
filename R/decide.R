@@ -32,12 +32,10 @@ dd_choose_preferred <- function(group_df, cfg) {
   ord_keys <- list()
   for (rule in cfg$preference_rules) {
     if (rule == "folder_priority") {
-      pri <- vapply(g$rel_path, function(p) {
-        hit <- which(vapply(cfg$folder_priority,
-                            function(f) startsWith(p, f), logical(1)))
-        if (length(hit)) min(hit) else length(cfg$folder_priority) + 1L
-      }, numeric(1))
-      ord_keys[[length(ord_keys) + 1L]] <- pri        # smaller = better
+      # smaller = better; see dd_folder_rank() (R/folders.R) for why the match
+      # is by path segment rather than by prefix.
+      ord_keys[[length(ord_keys) + 1L]] <-
+        dd_folder_rank(g$rel_path, cfg$folder_priority)
     } else if (!is.null(dd_pref_scorers[[rule]])) {
       ord_keys[[length(ord_keys) + 1L]] <- -dd_pref_scorers[[rule]](g)
     }

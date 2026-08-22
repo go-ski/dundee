@@ -71,7 +71,17 @@ lsh_bands: 16
 preference_rules: [max_pixels, max_filesize, max_meta, oldest_capture]
 
 # Folders (relative to library_root), most-preferred first. Only consulted
-# when folder_priority appears in preference_rules above.
+# when folder_priority appears in preference_rules above -- list it FIRST there
+# to let the tree decide and the rules above break what it leaves tied.
+#
+# Entries match whole path segments, so `G_EOS` covers `G_EOS/x.jpg` but not
+# `G_EOS6D/x.jpg`. Name a directory at any depth (`Old/Aperture` is fine).
+#
+# dd_run_folders() -- `dundee folders` from a shell -- prints the duplicate
+# groups summarised by the directories they span, which is where a ranking
+# comes from. dd_run_folders(effect = TRUE) (`--effect`) then reports what the
+# ranking below would decide, and every group it would decide differently than
+# preference_rules decides it now.
 folder_priority: []
 
 # --- review app -------------------------------------------------------------

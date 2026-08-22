@@ -178,6 +178,8 @@ dd_run_inventory()
 
 # Phase 2 — analyze, then review
 dd_run_analyze()
+dd_run_folders()                     # groups summarised by directory
+dd_run_folders(effect = TRUE)        # audit folder_priority before applying it
 dd_app()                             # opens the Shiny review app
 
 # Phase 3 — write the move script, run it yourself, then reconcile
@@ -192,11 +194,26 @@ Every stage takes an optional first argument naming the project: a work
 directory, or an already-resolved list from `dd_config()`. With `dd_use()` set
 (or `$DUNDEE_WORK`, or a `config.yml` in the working directory) it can be
 omitted. Add `quiet = TRUE` to any `dd_run_*()` call to suppress phase banners
-and progress bars.
+and progress bars — for `dd_run_folders()`, whose report *is* its output, that
+silences the report and leaves you the return value to work with.
 
 Passing a path to a `config.yml` also works, but the directory *containing* that
 file then becomes the work directory — so don't point it at the dundee checkout
 unless you want the store, `staging/`, `thumbs/` and `tmp/` created there.
+
+<a id="working-with-the-store"></a>
+A few functions take the **open store** rather than a work directory, because
+they are meant to be composed with your own queries: `dd_apply_bulk_decisions()`,
+`dd_folder_patterns()`, `dd_folder_effect()`. Open it yourself:
+
+```r
+cfg <- dd_config("~/dundee/family-photos")
+con <- dd_db_connect(cfg)
+on.exit(DBI::dbDisconnect(con))
+```
+
+Every `dd_run_*()` wrapper does exactly this internally, so use them unless you
+want the returned data frames rather than the printed report.
 
 ### Usage From the terminal (shell)
 
@@ -216,6 +233,7 @@ checkout; installed and symlinked (see Requirements) it is just `dundee`:
 
 # Phase 2 — analyze, then review
 ./exec/dundee analyze ~/dundee/family-photos [--quiet]
+./exec/dundee folders ~/dundee/family-photos [--depth=N] [--effect]
 ./exec/dundee app     ~/dundee/family-photos [--port=N] [--no-browser]
 
 # Phase 3 — write the move script, run it yourself, then reconcile
@@ -265,6 +283,74 @@ Every stage is idempotent and re-runnable.
   unless the library is mounted, non-empty and writable, and it records one
   failure without abandoning the rest of the batch. dundee itself never writes
   to the library at any phase, including this one.
+
+### Deciding by directory
+
+A library gains duplicates by being copied wholesale — an old app's managed
+library, a scanner's output, a backup folder — so which copy to keep is usually
+a property of the *tree*, not of the file. That makes the directory structure a
+far shorter description of the problem than the group list: tens of thousands of
+groups typically collapse to a few dozen directory patterns.
+
+```r
+dd_run_folders()          # duplicate groups summarised by the directories they span
+```
+```sh
+dundee folders            # the same, from a shell
+```
+
+```
+groups photos dirs  pattern
+ 23626  47252    2  F_2010 + LaCie_ApertureLibrary
+  3181   6379    2  LaCie_ApertureLibrary + ScanAlex
+  1688   3376    1  G_EOS
+  1558   4674    3  F_2010 + G_EOS + LaCie_ApertureLibrary
+```
+
+`dirs` is how many directories the pattern spans. **`1` means every copy is in
+one directory**, where `folder_priority` cannot help and the quality rules or
+the review app must decide; `depth = 2` (`--depth=2`) looks inside those.
+
+Rank the directories in `config.yml` — most-preferred first, `folder_priority`
+listed first in `preference_rules` so the tree decides and the other rules break
+what it leaves tied — then check the ranking before writing anything:
+
+```r
+dd_run_folders(effect = TRUE)
+```
+```sh
+dundee folders --effect
+```
+
+```
+  folder_priority decides 34140 of 35942 group(s); 1802 fall through to max_pixels, ...
+  945 group(s) would be decided DIFFERENTLY than preference_rules decides them today
+```
+
+That last number is the reason to look. The quality rules are often *arbitrary*
+rather than wrong: between two byte-identical copies `max_pixels` cannot
+discriminate at all and `max_filesize` decides on JPEG encoding noise, so a
+handful of groups land on the copy you would never have chosen — invisibly,
+spread through the largest pattern. The audit writes nothing; when the
+disagreements look right, apply them ([`con` and `cfg`](#working-with-the-store)):
+
+```r
+dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)
+```
+
+`overwrite = TRUE` is required: edited rules do not re-apply to photos that
+already have a decision (see [Editing config.yml
+afterwards](#editing-configyml-afterwards)).
+
+To try a ranking *without* editing `config.yml` first, pass it straight to the
+audit — the same call `dd_run_folders(effect = TRUE)` makes underneath, and it
+returns every disagreeing group rather than the first few:
+
+```r
+eff <- dd_folder_effect(con, cfg, c("F_2010", "G_EOS", "LaCie_ApertureLibrary"))
+eff$by_folder     # groups the tree settles on its own
+eff$differs       # every group this ranking would change
+```
 
 ## What lives where
 
@@ -318,7 +404,9 @@ Everything else is tuning, not paths:
   carries none (stored as 0); ties among unreadable photos still fall through
   to the remaining rules.
 - `folder_priority` — folders relative to `library_root`, most-preferred first;
-  consulted only when `folder_priority` appears in `preference_rules`.
+  consulted only when `folder_priority` appears in `preference_rules`. Entries
+  match whole path segments, so `G_EOS` covers `G_EOS/x.jpg` but not
+  `G_EOS6D/x.jpg`. See [Deciding by directory](#deciding-by-directory).
 - `review_cache` — how many full-size originals the review app keeps in
   `originals/` for its comparison viewer, least-recently-used evicted first
   (default 100). Budget for it: 100 JPEGs is roughly 300 MB, but 100 TIFF or RAW
@@ -379,8 +467,9 @@ Two caveats it cannot fix for you:
   decisions.** `dd_run_plan(bulk = TRUE)` skips every photo that already has a
   decision, so the edited rules affect only photos decided afterwards. To apply
   them to what is already decided, call
-  `dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)` directly — which also
-  discards any manual choices made in the review app.
+  `dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)` directly
+  ([`con` and `cfg`](#working-with-the-store)) — which also discards any manual
+  choices made in the review app.
 
 `hamming_threshold` is otherwise safe to change at any time — re-run analyze and
 grouping is recomputed from the stored fingerprints. Note that *tightening* it

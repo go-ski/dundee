@@ -41,6 +41,10 @@ inv_err="$TOP/inventory.err"
 ./exec/dundee inventory "$WORK" --quiet 2>"$inv_err"
 cat "$inv_err" >&2
 ./exec/dundee analyze   "$WORK" --quiet
+# dd_run_folders() prints through message(), and this is the only place its
+# formatting runs at all -- R CMD check never reaches the CLI.
+./exec/dundee folders   "$WORK" > "$TOP/folders.out" 2>&1
+./exec/dundee folders   "$WORK" --depth=2 --effect >> "$TOP/folders.out" 2>&1
 ./exec/dundee plan      "$WORK" --bulk --quiet
 ./exec/dundee status    "$WORK"
 
@@ -57,6 +61,19 @@ chk "$ngroups" 2 "group count"
 chk "$nmoves"  4 "planned move count"
 grep -q "$FX/_dedup/" "$WORK/moves.sh" || { echo "FAIL: dest not under the library"; fail=1; }
 grep -q "sub a/img1 dup.jpg" "$WORK/moves.sh" || { echo "FAIL: spaced path missing"; fail=1; }
+
+# One fixture group straddles the library root and "sub a"; the other is two
+# copies at the root. Both rows must appear, and the root-only one must span a
+# single directory -- the case folder_priority cannot decide.
+grep -q '(root) + sub a' "$TOP/folders.out" ||
+  { echo "FAIL: folders did not report the root/sub a pattern"; fail=1; }
+grep -qE '^ +1 +2 +1 +\(root\)$' "$TOP/folders.out" ||
+  { echo "FAIL: folders miscounted the root-only pattern"; cat "$TOP/folders.out"; fail=1; }
+grep -q 'span one directory' "$TOP/folders.out" ||
+  { echo "FAIL: folders did not flag the undecidable pattern"; fail=1; }
+# With folder_priority unset, --effect must say so rather than print zeros.
+grep -q 'audit needs folder_priority' "$TOP/folders.out" ||
+  { echo "FAIL: --effect did not report an unset folder_priority"; fail=1; }
 
 # Non-UTF-8 bytes in an EXIF tag must not derail the metadata hash. The worker
 # sorts exiftool's output before hashing it, and under a UTF-8 locale that sort
