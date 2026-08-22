@@ -136,3 +136,107 @@ test_that("a group renders through the real app server", {
     expect_match(as.character(output$group_list$html), "dd-g-1", fixed = TRUE)
   })
 })
+
+# --- the Quit button --------------------------------------------------------
+
+# stopApp() is inert under testServer(): it fires, execution continues, and its
+# value is discarded. So "the button really stops the app" cannot be asserted
+# dynamically and is checked against the parse tree instead -- the same tool
+# this file already uses for the visibility gap above.
+
+# Body of the observeEvent() whose first argument is `input$<name>`.
+observer_body <- function(path, name) {
+  found <- NULL
+  walk <- function(e) {
+    if (!is.call(e)) return(invisible(NULL))
+    if (is.name(e[[1]]) && identical(as.character(e[[1]]), "observeEvent") &&
+        length(e) >= 3L) {
+      ev <- e[[2]]
+      if (is.call(ev) && identical(as.character(ev[[1]]), "$") &&
+          identical(as.character(ev[[2]]), "input") &&
+          identical(as.character(ev[[3]]), name)) {
+        found <<- e[[3]]
+      }
+    }
+    for (i in seq_along(e)) {
+      tryCatch(if (!is.null(e[[i]])) walk(e[[i]]), error = function(...) NULL)
+    }
+    invisible(NULL)
+  }
+  for (ex in parse(path)) walk(ex)
+  found
+}
+
+# Names of everything called inside `e`, counting `session$onFlushed()` as
+# "onFlushed": the callee there is a `$` call, not a symbol.
+calls_in <- function(e) {
+  acc <- character()
+  walk <- function(x) {
+    if (!is.call(x)) return(invisible(NULL))
+    fn <- x[[1]]
+    if (is.name(fn)) {
+      acc <<- c(acc, as.character(fn))
+    } else if (is.call(fn) && identical(as.character(fn[[1]]), "$")) {
+      acc <<- c(acc, as.character(fn[[3]]))
+    }
+    for (i in seq_along(x)) {
+      tryCatch(if (!is.null(x[[i]])) walk(x[[i]]), error = function(...) NULL)
+    }
+    invisible(NULL)
+  }
+  walk(e)
+  unique(acc)
+}
+
+test_that("the sidebar offers a Quit button", {
+  app <- app_file(); skip_if(is.null(app), "app.R not reachable")
+  ids <- unlist(lapply(parse(app), function(e) {
+    out <- character()
+    walk <- function(x) {
+      if (!is.call(x)) return(invisible(NULL))
+      if (is.name(x[[1]]) && identical(as.character(x[[1]]), "actionButton") &&
+          length(x) >= 2L && is.character(x[[2]])) out <<- c(out, x[[2]])
+      for (i in seq_along(x)) {
+        tryCatch(if (!is.null(x[[i]])) walk(x[[i]]), error = function(...) NULL)
+      }
+      invisible(NULL)
+    }
+    walk(e); out
+  }))
+  expect_true("quit" %in% ids)
+})
+
+test_that("quitting stops the app, and only after the modal is flushed", {
+  # Ordering is the whole point: stopApp() called directly drops the websocket
+  # mid-flush and the reviewer gets Shiny's grey disconnect overlay instead of
+  # the modal -- a deliberate quit that reads as a crash.
+  app <- app_file(); skip_if(is.null(app), "app.R not reachable")
+  body <- observer_body(app, "quit")
+  expect_false(is.null(body))
+  used <- calls_in(body)
+  expect_true("showModal" %in% used)
+  expect_true("onFlushed" %in% used)
+  # stopApp is reached through onFlushed's callback, never at observer level.
+  expect_true("stopApp" %in% used)
+  direct <- Filter(function(e) {
+    is.call(e) && is.name(e[[1]]) && identical(as.character(e[[1]]), "stopApp")
+  }, as.list(body))
+  expect_length(direct, 0L)
+})
+
+test_that("quitting hands back the review summary", {
+  s <- app_store()
+  old <- Sys.getenv("DUNDEE_CONFIG", unset = NA)
+  on.exit({
+    if (is.na(old)) Sys.unsetenv("DUNDEE_CONFIG") else
+      Sys.setenv(DUNDEE_CONFIG = old)
+  }, add = TRUE)
+  Sys.setenv(DUNDEE_CONFIG = s$resolved)
+
+  shiny::testServer(dirname(app_file()), {
+    session$setInputs(quit = 1)
+    # The fixture builds two groups (one per tier) and decides neither.
+    expect_equal(rv$exit, list(decided = 0L, groups = 2L))
+    expect_silent(session$flushReact())       # the onFlushed callback runs
+  })
+})

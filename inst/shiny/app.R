@@ -215,7 +215,12 @@ ui <- page_sidebar(
       actionButton("bulk", "Apply bulk heuristic to all", class = "btn-primary"),
       helpText("Bulk rules:", paste(cfg$preference_rules, collapse = " > ")),
       div(class = "my-1", textOutput("progress")),
-      uiOutput("group_list", class = "dd-glist")
+      uiOutput("group_list", class = "dd-glist"),
+      # After the flexing list, so it pins to the bottom of the sidebar and
+      # stays reachable however long the list grows. Outline, not primary: it
+      # must not compete with the bulk button above.
+      div(class = "mt-2 pt-2 border-top",
+          actionButton("quit", "Quit", class = "btn-sm btn-outline-secondary"))
     )
   ),
   card(
@@ -227,7 +232,7 @@ ui <- page_sidebar(
 
 server <- function(input, output, session) {
   rv <- reactiveValues(groups = group_list(), current = NULL, tick = 0,
-                       viewing = FALSE)
+                       viewing = FALSE, exit = NULL)
 
   observe({
     g <- rv$groups
@@ -265,6 +270,20 @@ server <- function(input, output, session) {
     session$sendCustomMessage("dd_current", rv$current)
   }, ignoreNULL = TRUE)
 
+  observeEvent(input$quit, {
+    # Summarise before stopping: the flush callback runs as the session is
+    # going away, which is no place to query the store.
+    rv$exit <- dd_review_progress(con)
+    showModal(modalDialog(
+      "Review app stopped. Your decisions are saved -- you can close this tab.",
+      footer = NULL, easyClose = FALSE))
+    # Stop only once that modal has reached the browser. Calling stopApp() here
+    # drops the websocket mid-flush, and the reviewer sees Shiny's grey
+    # "Disconnected from the server" overlay -- a deliberate quit reading as a
+    # crash.
+    session$onFlushed(function() stopApp(rv$exit), once = TRUE)
+  })
+
   observeEvent(input$bulk, {
     n <- dd_apply_bulk_decisions(con, cfg, overwrite = FALSE)
     rv$groups <- group_list(); rv$tick <- rv$tick + 1
@@ -273,8 +292,8 @@ server <- function(input, output, session) {
 
   output$progress <- renderText({
     rv$tick
-    g <- rv$groups
-    sprintf("%d / %d groups decided", sum(g$decided > 0), nrow(g))
+    p <- dd_review_progress(con)
+    sprintf("%d / %d groups decided", p$decided, p$groups)
   })
 
   output$group_header <- renderText({

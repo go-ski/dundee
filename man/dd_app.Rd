@@ -14,14 +14,24 @@ dd_app(config = NULL, port = 7654L, launch_browser = interactive())
 \item{launch_browser}{Logical; open a browser window.}
 }
 \value{
-The value of \code{\link[shiny:runApp]{shiny::runApp()}}, invisibly.
+Invisibly, the value \code{\link[shiny:runApp]{shiny::runApp()}} returned: after the Quit
+button, a \code{\link[=dd_review_progress]{dd_review_progress()}} list of \code{decided} and \code{groups}; after any
+other exit, whatever stopped it.
 }
 \description{
 The config is resolved to absolute paths before launching, because
 \code{\link[shiny:runApp]{shiny::runApp()}} changes the working directory to the app folder.
 }
+\details{
+Blocks until the app stops. The app's Quit button stops it cleanly and
+reports how far the review got; Ctrl-C still works and simply returns no
+summary.
+}
 \examples{
 \dontrun{
 dd_app("config.yml", port = 7654)
+
+p <- dd_app()          # quit from the browser, then:
+p$decided              # groups reviewed this session and before
 }
 }

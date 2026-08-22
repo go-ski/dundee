@@ -187,3 +187,30 @@ dd_group_details <- function(con, photos, cfg) {
   rownames(out) <- NULL
   out
 }
+
+#' Review progress, counted in groups.
+#'
+#' Counts **groups** that carry at least one decision, not decided photos. A
+#' group is reviewed once its preferred copy has been chosen, however many
+#' copies it holds, so groups are the unit the reviewer is working through.
+#' This is deliberately not [dd_status()]'s `decided`, which counts photo rows.
+#'
+#' @param con A DBIConnection.
+#' @return A list with `decided` and `groups`, both integers.
+#' @examples
+#' \dontrun{
+#' cfg <- dd_config("~/dundee/family-photos")
+#' con <- dd_db_connect(cfg)
+#' on.exit(DBI::dbDisconnect(con))
+#'
+#' dd_review_progress(con)
+#' }
+#' @export
+dd_review_progress <- function(con) {
+  n <- function(sql) as.integer(DBI::dbGetQuery(con, sql)[[1L]])
+  list(
+    decided = n("SELECT COUNT(DISTINCT g.group_id) FROM groups g
+                   JOIN decisions d USING (photo_id)"),
+    groups  = n("SELECT COUNT(DISTINCT group_id) FROM groups")
+  )
+}

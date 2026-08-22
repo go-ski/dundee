@@ -195,3 +195,73 @@ test_that("the encoded cache round-trips, including awkward values", {
   # Every field is present in the decoded vector, whether it was stored or not.
   expect_setequal(names(back), dd_detail_all_fields())
 })
+
+# --- review progress --------------------------------------------------------
+
+# The sidebar and the exit summary both report "N / M groups decided", so the
+# count is a package function rather than an app-local one. The unit is the
+# GROUP: a group is reviewed once its preferred copy is chosen, however many
+# copies it holds. dd_status()'s `decided` counts photo rows and is a different
+# number on the same store.
+
+progress_store <- function(groups) {
+  cfg <- dd_config_defaults()
+  cfg$work_dir <- tempfile("work-"); dir.create(cfg$work_dir)
+  cfg$db_path <- file.path(cfg$work_dir, "d.sqlite")
+  con <- dd_db_connect(cfg); dd_db_init(con)
+  for (gid in seq_along(groups)) {
+    for (k in seq_len(groups[[gid]])) {
+      DBI::dbExecute(con,
+        "INSERT INTO photos(path, rel_path, size) VALUES(?, ?, 100)",
+        params = list(sprintf("/l/g%d-%d.jpg", gid, k),
+                      sprintf("g%d-%d.jpg", gid, k)))
+      pid <- DBI::dbGetQuery(con, "SELECT last_insert_rowid() AS id")$id
+      DBI::dbExecute(con, "INSERT INTO groups(group_id, photo_id, tier)
+                           VALUES(?, ?, 'exact')", params = list(gid, pid))
+    }
+  }
+  con
+}
+
+decide_photo <- function(con, gid, k, preferred = 1L) {
+  pid <- DBI::dbGetQuery(con, sprintf(
+    "SELECT photo_id FROM photos WHERE rel_path = 'g%d-%d.jpg'", gid, k))$photo_id
+  dd_record_decision(con, data.frame(photo_id = pid, group_id = gid,
+                                     preferred = preferred))
+}
+
+test_that("an untouched store has decided nothing", {
+  con <- progress_store(c(2L, 2L, 3L)); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  expect_equal(dd_review_progress(con), list(decided = 0L, groups = 3L))
+})
+
+test_that("deciding one photo marks its whole group reviewed", {
+  # The distinction that matters: choosing the winner writes a row per member
+  # in the app, but even a single row means the reviewer has answered for that
+  # group. Counting `decisions` rows instead would report 1 of 3 here as 1
+  # group and then overshoot as soon as a group has both members recorded.
+  con <- progress_store(c(2L, 2L, 3L)); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  decide_photo(con, 1L, 1L)
+  expect_equal(dd_review_progress(con)$decided, 1L)
+})
+
+test_that("a fully decided group still counts once", {
+  con <- progress_store(c(2L, 2L)); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  decide_photo(con, 1L, 1L, preferred = 1L)
+  decide_photo(con, 1L, 2L, preferred = 0L)
+  p <- dd_review_progress(con)
+  expect_equal(p$decided, 1L)
+  expect_equal(DBI::dbGetQuery(con, "SELECT COUNT(*) c FROM decisions")$c, 2L)
+  expect_equal(p$groups, 2L)
+})
+
+test_that("every group decided reports all of them", {
+  con <- progress_store(c(2L, 2L)); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  decide_photo(con, 1L, 1L); decide_photo(con, 2L, 1L)
+  expect_equal(dd_review_progress(con), list(decided = 2L, groups = 2L))
+})
+
+test_that("an empty store reports zeros rather than erroring", {
+  con <- progress_store(integer(0)); on.exit(DBI::dbDisconnect(con), add = TRUE)
+  expect_equal(dd_review_progress(con), list(decided = 0L, groups = 0L))
+})

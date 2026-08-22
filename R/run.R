@@ -386,13 +386,22 @@ dd_run_folders <- function(config = NULL, depth = 1L, effect = FALSE,
 #' The config is resolved to absolute paths before launching, because
 #' [shiny::runApp()] changes the working directory to the app folder.
 #'
+#' Blocks until the app stops. The app's Quit button stops it cleanly and
+#' reports how far the review got; Ctrl-C still works and simply returns no
+#' summary.
+#'
 #' @param config A work directory, a config path, or a list from [dd_config()].
 #' @param port Port to serve on.
 #' @param launch_browser Logical; open a browser window.
-#' @return The value of [shiny::runApp()], invisibly.
+#' @return Invisibly, the value [shiny::runApp()] returned: after the Quit
+#'   button, a [dd_review_progress()] list of `decided` and `groups`; after any
+#'   other exit, whatever stopped it.
 #' @examples
 #' \dontrun{
 #' dd_app("config.yml", port = 7654)
+#'
+#' p <- dd_app()          # quit from the browser, then:
+#' p$decided              # groups reviewed this session and before
 #' }
 #' @export
 dd_app <- function(config = NULL, port = 7654L,
@@ -419,8 +428,17 @@ dd_app <- function(config = NULL, port = 7654L,
   }, add = TRUE)
 
   message(sprintf("review app: http://127.0.0.1:%d", as.integer(port)))
-  invisible(shiny::runApp(app_dir, port = as.integer(port),
-                          launch.browser = isTRUE(launch_browser)))
+  out <- shiny::runApp(app_dir, port = as.integer(port),
+                       launch.browser = isTRUE(launch_browser))
+  # The Quit button stops the app with dd_review_progress()'s summary, so a
+  # clean exit can report where the review got to. Every other way out --
+  # Ctrl-C, a stopApp() elsewhere -- returns something else entirely, which
+  # must not be formatted as one.
+  if (is.list(out) && all(c("decided", "groups") %in% names(out))) {
+    message(sprintf("review app: %d of %d group(s) decided",
+                    out$decided, out$groups))
+  }
+  invisible(out)
 }
 
 # --- phase 3: plan + move ---------------------------------------------------
