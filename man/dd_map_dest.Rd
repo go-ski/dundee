@@ -2,7 +2,7 @@
 % Please edit documentation in R/move.R
 \name{dd_map_dest}
 \alias{dd_map_dest}
-\title{Compute the destination (server-side) path for a photo.}
+\title{Compute the destination path for a photo.}
 \usage{
 dd_map_dest(rel_path, preferred, cfg)
 }
@@ -17,5 +17,5 @@ dd_map_dest(rel_path, preferred, cfg)
 The destination absolute path, preserving the relative tree.
 }
 \description{
-Compute the destination (server-side) path for a photo.
+Compute the destination path for a photo.
 }

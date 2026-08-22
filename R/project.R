@@ -20,7 +20,8 @@ dd_pkg_version <- function() {
 
 # Derived, non-user-settable fields. Named here so the resolved snapshot can be
 # re-read without every one of them tripping the unknown-key warning.
-dd_derived_keys <- c("temp_dir", "staging_dir", "thumb_dir", "config_file")
+dd_derived_keys <- c("temp_dir", "staging_dir", "thumb_dir", "orig_dir",
+                     "config_file")
 
 # ---------------------------------------------------------------------------
 # path utilities
@@ -51,18 +52,36 @@ dd_resolve_path <- function(p) {
 # and cache per directory, since dd_config() is called on every stage.
 dd_case_cache <- new.env(parent = emptyenv())
 
+dd_flip_case <- function(x) {
+  chartr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", x)
+}
+
+# Read-only by construction: this runs on library_root, which is mounted
+# read-only and whose mtime must not move. Never probe by writing a test file.
+# Instead take an existing entry whose name changes under a case flip and ask
+# whether the flipped name still resolves.
 dd_fs_case_insensitive <- function(path = tempdir()) {
   dir <- path
   while (!dir.exists(dir) && dirname(dir) != dir) dir <- dirname(dir)
   key <- dir
   hit <- dd_case_cache[[key]]
   if (!is.null(hit)) return(hit)
-  stem <- paste0(".dundee-Case-", Sys.getpid())
-  probe <- file.path(dir, stem)
-  on.exit(unlink(probe), add = TRUE)
-  ok <- isTRUE(suppressWarnings(file.create(probe, showWarnings = FALSE)))
-  res <- if (!ok) identical(Sys.info()[["sysname"]], "Darwin") else
-    file.exists(file.path(dir, toupper(stem)))
+
+  entries <- tryCatch(list.files(dir, all.files = TRUE, no.. = TRUE),
+                      error = function(e) character(0))
+  flipped <- dd_flip_case(entries)
+  cased <- flipped != entries
+  res <- if (any(cased & flipped %in% entries)) {
+    # Two entries differing only in case coexist: definitively case-sensitive.
+    FALSE
+  } else if (any(cased)) {
+    file.exists(file.path(dir, flipped[cased][[1]]))
+  } else {
+    # Empty directory, or no entry carries a letter: fall back to the platform
+    # default (APFS/HFS+ are case-insensitive unless deliberately formatted).
+    identical(Sys.info()[["sysname"]], "Darwin")
+  }
   assign(key, res, envir = dd_case_cache)
   res
 }
@@ -76,6 +95,22 @@ dd_paths_overlap <- function(a, b) {
   identical(a, b) ||
     startsWith(paste0(a, "/"), paste0(b, "/")) ||
     startsWith(paste0(b, "/"), paste0(a, "/"))
+}
+
+# The directional half of the same question: is `child` at or below `parent`?
+# dd_paths_overlap() answers "does either contain the other", which is what
+# work_dir vs library_root needs; the phase 3 destination roots need the
+# asymmetric form, and need the same case folding -- on an SMB or APFS mount
+# /Volumes/Photo and /Volumes/photo are one directory, so a plain startsWith()
+# would reject a destination that is genuinely inside the library.
+dd_path_under <- function(child, parent) {
+  if (is.null(child) || is.null(parent) || !length(child) || !length(parent) ||
+      !nzchar(child) || !nzchar(parent)) return(FALSE)
+  if (dd_fs_case_insensitive(child) || dd_fs_case_insensitive(parent)) {
+    child <- tolower(child); parent <- tolower(parent)
+  }
+  identical(child, parent) ||
+    startsWith(paste0(child, "/"), paste0(parent, "/"))
 }
 
 # ---------------------------------------------------------------------------
@@ -139,9 +174,10 @@ dd_work_dir <- function(work_dir = NULL) {
 #' @param work_dir Directory to create/use. Everything dundee writes for this
 #'   library lives here.
 #' @param library_root Read-only root of the photo library.
-#' @param ... Further scalar config fields, e.g. `ssh_host = "nas.local"`.
-#' @param overwrite Replace an existing `config.yml` (the previous version is
-#'   archived to `config.history/` either way).
+#' @param ... Further scalar config fields, e.g. `parallel = 4`.
+#' @param overwrite Replace an existing `config.yml`, archiving the previous
+#'   version to `config.history/` first. Without it an existing config is left
+#'   untouched and nothing is archived.
 #' @return The validated config list, invisibly.
 #' @export
 dd_init <- function(work_dir, library_root = NULL, ..., overwrite = FALSE) {
@@ -258,8 +294,9 @@ dd_config_source <- function(x = NULL) {
   list(file = x, work_dir = dd_resolve_path(dirname(x)))
 }
 
-# A typo (hamming_thresold:) used to be copied in and silently ignored, so the
-# run completed with the default value -- the most expensive kind of failure.
+# config.yml is hand-edited, so a typo (hamming_thresold:) is the likeliest
+# error there is, and the silent version of it -- run completes, default value
+# used -- is the most expensive. Name it, and guess what was meant.
 dd_check_keys <- function(user, defaults) {
   known <- c(names(defaults), "work_dir", dd_derived_keys)
   bad <- setdiff(names(user), known)
@@ -288,6 +325,8 @@ dd_validate <- function(cfg) {
   cfg$parallel         <- num("parallel", 1L, 256L)
   cfg$fingerprint_grid <- num("fingerprint_grid", 4L, 32L)
   cfg$lsh_bands        <- num("lsh_bands", 1L, 1024L)
+  # 0 disables the review app's original cache entirely (every view re-reads).
+  cfg$review_cache     <- num("review_cache", 0L, 100000L)
   bits <- cfg$fingerprint_grid^2
   cfg$hamming_threshold <- num("hamming_threshold", 0L,
                                if (is.na(bits)) 1024L else bits)
@@ -339,22 +378,10 @@ dd_config <- function(config = NULL, require_library = FALSE, create = TRUE) {
   cfg <- utils::modifyList(defaults,
                            user[intersect(names(user), names(defaults))])
 
-  # The directory holding config.yml is the work directory. A `work_dir:` key
-  # is honoured only when it disagrees, and only for backward compatibility.
+  # A project is a directory: the one holding config.yml is the work directory.
+  # There is nothing to configure here, which is what makes a second library a
+  # second directory rather than a second set of paths to keep in step.
   cfg$work_dir <- src$work_dir
-  if (!is.null(user$work_dir)) {
-    declared <- dd_resolve_path(user$work_dir)
-    if (!identical(declared, src$work_dir)) {
-      message("config: '", src$file, "' declares work_dir: ", declared,
-              "\n  (legacy layout; honoured for now -- migrate with ",
-              "dd_migrate(\"", src$file, "\"))")
-      cfg$work_dir <- declared
-    }
-  }
-  if (!is.null(user$temp_dir)) {
-    message("config: 'temp_dir' is no longer user-configurable; scratch ",
-            "space is always <work_dir>/tmp.")
-  }
 
   cfg$extensions <- tolower(as.character(cfg$extensions))
   cfg <- dd_validate(cfg)
@@ -369,6 +396,12 @@ dd_config <- function(config = NULL, require_library = FALSE, create = TRUE) {
     }
   }
   cfg$library_root <- dd_resolve_path(cfg$library_root)
+  # Phase 3 destinations are local paths now, so they need the same treatment:
+  # ~ expanded and symlinks resolved, or the containment check in
+  # dd_require_move_config() would compare an unexpanded string against a real
+  # path and reject a destination that is in fact inside the library.
+  cfg$preferred_root <- dd_resolve_path(cfg$preferred_root)
+  cfg$nonpreferred_root <- dd_resolve_path(cfg$nonpreferred_root)
 
   if (dd_paths_overlap(cfg$library_root, cfg$work_dir)) {
     stop("config: work_dir must not be the same as, nested inside, or ",
@@ -384,6 +417,7 @@ dd_config <- function(config = NULL, require_library = FALSE, create = TRUE) {
   cfg$temp_dir    <- file.path(cfg$work_dir, "tmp")
   cfg$staging_dir <- file.path(cfg$work_dir, "staging")
   cfg$thumb_dir   <- file.path(cfg$work_dir, "thumbs")
+  cfg$orig_dir    <- file.path(cfg$work_dir, "originals")
   cfg$config_file <- src$file
   cfg
 }
@@ -419,29 +453,50 @@ dd_config_snapshot <- function(cfg) {
   writeLines(c(
     sprintf("# dundee %s -- written %s. Do not edit; edit config.yml.",
             dd_pkg_version(), format(Sys.time())),
-    sprintf("# derived: db=%s tmp=%s staging=%s thumbs=%s",
-            cfg$db_path, cfg$temp_dir, cfg$staging_dir, cfg$thumb_dir),
+    sprintf("# derived: db=%s tmp=%s staging=%s thumbs=%s originals=%s",
+            cfg$db_path, cfg$temp_dir, cfg$staging_dir, cfg$thumb_dir,
+            cfg$orig_dir),
     yaml::as.yaml(body)
   ), out)
   invisible(out)
+}
+
+# Move every stored absolute path from one library root to another. Only the
+# root prefix changes; the relative tree below it is what identifies a photo, so
+# rel_path is untouched. Returns the number of rows rewritten.
+dd_rebase_paths <- function(con, old_root, new_root) {
+  old <- paste0(sub("/+$", "", old_root), "/")
+  new <- paste0(sub("/+$", "", new_root), "/")
+  n <- 0L
+  for (tbl in c("photos", "errors")) {
+    n <- n + DBI::dbExecute(
+      con, sprintf("UPDATE %s SET path = ? || substr(path, ?)
+                     WHERE substr(path, 1, ?) = ?", tbl),
+      params = list(new, nchar(old) + 1L, nchar(old), old))
+  }
+  n
+}
+
+# The meta table (created by dd_db_init) holds store-level provenance: config
+# invariants, the writing version, and the per-stage config stamps below.
+dd_meta_get <- function(con, k) {
+  v <- DBI::dbGetQuery(con, "SELECT value FROM meta WHERE key = ?",
+                       params = list(k))
+  if (nrow(v)) v$value[[1]] else NULL
+}
+
+dd_meta_set <- function(con, k, v) {
+  DBI::dbExecute(con, "INSERT INTO meta(key, value) VALUES(?, ?)
+                       ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                 params = list(k, as.character(v)))
 }
 
 # fingerprint_grid and library_root are baked into stored rows: changing the
 # grid makes old and new fingerprints incomparable; changing library_root
 # invalidates every stored absolute path. Both were silent corruptions.
 dd_config_guard <- function(con, cfg, rebase = FALSE) {
-  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS meta (
-                         key TEXT PRIMARY KEY, value TEXT)")
-  get1 <- function(k) {
-    v <- DBI::dbGetQuery(con, "SELECT value FROM meta WHERE key = ?",
-                         params = list(k))
-    if (nrow(v)) v$value[[1]] else NULL
-  }
-  set1 <- function(k, v) {
-    DBI::dbExecute(con, "INSERT INTO meta(key, value) VALUES(?, ?)
-                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                   params = list(k, as.character(v)))
-  }
+  get1 <- function(k) dd_meta_get(con, k)
+  set1 <- function(k, v) dd_meta_set(con, k, v)
   grid <- get1("fingerprint_grid")
   if (!is.null(grid) && !identical(as.integer(grid), cfg$fingerprint_grid)) {
     stop("dundee: this store was built with fingerprint_grid = ", grid,
@@ -451,13 +506,21 @@ dd_config_guard <- function(con, cfg, rebase = FALSE) {
          call. = FALSE)
   }
   root <- get1("library_root")
-  if (!is.null(root) && !is.null(cfg$library_root) &&
-      nzchar(cfg$library_root) && !identical(root, cfg$library_root) &&
-      !isTRUE(rebase)) {
+  moved <- !is.null(root) && !is.null(cfg$library_root) &&
+    nzchar(cfg$library_root) && !identical(root, cfg$library_root)
+  if (moved && !isTRUE(rebase)) {
     stop("dundee: this store was built against library_root\n    ", root,
          "\n  but config.yml now says\n    ", cfg$library_root,
          "\n  Re-run with rebase = TRUE only if the same library was ",
          "re-mounted at a new path.", call. = FALSE)
+  }
+  if (moved) {
+    # Recording the new root is not enough: every stored path is absolute under
+    # the old one, so without rewriting them the resume filter matches nothing
+    # and the move plan would name sources that are no longer there.
+    n <- dd_rebase_paths(con, root, cfg$library_root)
+    message(sprintf("dundee: rebased %d stored path(s)\n    %s\n  ->  %s",
+                    n, root, cfg$library_root))
   }
   set1("fingerprint_grid", cfg$fingerprint_grid)
   if (!is.null(cfg$library_root) && nzchar(cfg$library_root)) {
@@ -468,16 +531,103 @@ dd_config_guard <- function(con, cfg, rebase = FALSE) {
 }
 
 # ---------------------------------------------------------------------------
+# config drift: what a config.yml edit invalidates
+# ---------------------------------------------------------------------------
+
+# Config keys each stage consumes. Editing one of these invalidates what that
+# stage wrote; editing anything else (parallel, review_cache, db_path) does not.
+# In pipeline order, which is also the order drift is reported and resolved.
+dd_stage_keys <- list(
+  inventory = c("library_root", "extensions", "cruft", "fingerprint_grid"),
+  analyze   = c("fingerprint_grid", "hamming_threshold", "lsh_bands"),
+  decide    = c("preference_rules", "folder_priority"),
+  plan      = c("library_root", "preferred_root", "nonpreferred_root")
+)
+
+# What to re-run for each stage. `decide` names dd_apply_bulk_decisions()
+# rather than dd_run_plan(bulk = TRUE) because that is the truth: dd_run_plan()
+# does not pass overwrite, so a bulk pass skips every photo that already has a
+# decision and would not re-apply the edited rules.
+dd_stage_cmd <- c(
+  inventory = "dd_run_inventory()",
+  analyze   = "dd_run_analyze()",
+  decide    = "dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)",
+  plan      = "dd_run_plan()"
+)
+
+# Flatten one config value to a comparable string. Deliberately not YAML: a
+# round-trip through as.yaml()/yaml.load() turns character(0) into list() and
+# blurs integer against character, which would report drift that is not there.
+dd_key_string <- function(v) {
+  if (is.null(v) || !length(v)) return("<unset>")
+  paste(as.character(v), collapse = ",")
+}
+
+# A stage's stamp: one key=value line per config key it consumes.
+dd_stamp_text <- function(cfg, keys) {
+  paste(sprintf("%s=%s", keys, vapply(keys, function(k) dd_key_string(cfg[[k]]),
+                                      character(1))),
+        collapse = "\n")
+}
+
+dd_stamp_parse <- function(txt) {
+  if (is.null(txt) || !nzchar(txt)) return(character(0))
+  parts <- strsplit(strsplit(txt, "\n", fixed = TRUE)[[1]], "=", fixed = TRUE)
+  stats::setNames(
+    vapply(parts, function(p) paste(p[-1], collapse = "="), character(1)),
+    vapply(parts, `[[`, character(1), 1L))
+}
+
+# Record the settings a stage just ran under. Called at the end of a successful
+# stage, so one that failed partway leaves the previous stamp standing.
+dd_stage_stamp <- function(con, stage, cfg) {
+  dd_meta_set(con, paste0("stamp_", stage),
+              dd_stamp_text(cfg, dd_stage_keys[[stage]]))
+  invisible(TRUE)
+}
+
+# Compare the current config against what each stage recorded. Returns only the
+# keys that changed. A stage with no stamp contributes nothing: "never run under
+# a recorded config" is not the same as "changed".
+dd_config_drift <- function(con, cfg) {
+  none <- data.frame(stage = character(0), key = character(0),
+                     was = character(0), now = character(0),
+                     stringsAsFactors = FALSE)
+  have <- DBI::dbExistsTable(con, "meta")
+  if (!have) return(none)
+  out <- none
+  for (stage in names(dd_stage_keys)) {
+    was <- dd_stamp_parse(dd_meta_get(con, paste0("stamp_", stage)))
+    if (!length(was)) next
+    for (k in dd_stage_keys[[stage]]) {
+      if (!k %in% names(was)) next          # stamped by an older version
+      now <- dd_key_string(cfg[[k]])
+      if (!identical(was[[k]], now)) {
+        out <- rbind(out, data.frame(stage = stage, key = k, was = was[[k]],
+                                     now = now, stringsAsFactors = FALSE))
+      }
+    }
+  }
+  out
+}
+
+# ---------------------------------------------------------------------------
 # where am I?
 # ---------------------------------------------------------------------------
 
 #' Report the state of a dundee work directory.
 #'
 #' Read-only: it never applies the config guard, so it still works when the
-#' config and the store have drifted apart.
+#' config and the store have drifted apart. It does report that drift: each
+#' stage records the config keys it consumed, and any that have since been
+#' edited in `config.yml` are listed along with the stage to re-run.
+#'
+#' Photos whose metadata could not be read at all are reported separately from
+#' photos that carry none, and counted in `unread`.
 #'
 #' @param config A work directory, config path, or config list.
-#' @return A one-row data frame of counts, invisibly.
+#' @return A one-row data frame of counts, including `unread` (photos with no
+#'   readable metadata) and a `drift` count of changed config keys, invisibly.
 #' @export
 dd_status <- function(config = NULL) {
   cfg <- dd_config(config)
@@ -500,52 +650,62 @@ dd_status <- function(config = NULL) {
     grouped = n("SELECT COUNT(*) FROM groups"),
     decided = n("SELECT COUNT(*) FROM decisions"),
     planned = n("SELECT COUNT(*) FROM moves WHERE state = 'planned'"),
-    done    = n("SELECT COUNT(*) FROM moves WHERE state = 'done'")
+    done    = n("SELECT COUNT(*) FROM moves WHERE state = 'done'"),
+    # Preferred copies moves.sh deliberately left where they were. Not done --
+    # nothing moved -- but not outstanding work either.
+    kept    = n("SELECT COUNT(*) FROM moves WHERE state = 'kept'"),
+    # NULL, not 0: the fingerprint worker leaves meta_count empty when it could
+    # not read a photo's metadata at all, which is not the same as a photo that
+    # carries none. Only the former is worth reporting.
+    unread  = n("SELECT COUNT(*) FROM photos WHERE meta_count IS NULL")
   )
   message(sprintf(
     paste("  photos %d (%d unreadable) | groups %d covering %d |",
-          "decided %d | moves %d planned, %d done"),
+          "decided %d | moves %d planned, %d done, %d kept"),
     out$photos, out$errors, out$groups, out$grouped, out$decided,
-    out$planned, out$done))
+    out$planned, out$done, out$kept))
+  if (out$unread > 0L) {
+    message(sprintf(
+      "  metadata unreadable for %d photo(s); max_meta cannot rank them",
+      out$unread))
+  }
+  # Not config drift: the file on disk is unchanged, the code that read it is
+  # not. Only inventory can repair it, and only it knows how many are affected.
+  fpv <- dd_meta_get(con, "fingerprint_version")
+  out$fingerprint_stale <- out$photos > 0L &&
+    (is.null(fpv) || as.integer(fpv) < dd_fingerprint_version)
+  if (isTRUE(out$fingerprint_stale)) {
+    message("  fingerprints predate the alpha fix; ",
+            "dd_run_inventory() re-reads only the photos it affects")
+  }
+
+  dr <- dd_config_drift(con, cfg)
+  out$drift <- nrow(dr)
   nxt <- if (out$photos == 0L) "dd_run_inventory()" else
     if (out$groups == 0L) "dd_run_analyze()" else
       if (out$decided < out$grouped) "dd_app()  # review remaining groups" else
-        if (out$planned == 0L && out$done == 0L) "dd_run_plan(bulk = TRUE)" else
-          if (out$planned > 0L) "dd_run_move(execute = TRUE)" else "nothing"
+        if (out$planned == 0L && out$done == 0L && out$kept == 0L)
+          "dd_run_plan(bulk = TRUE)" else
+          if (out$planned > 0L) "run moves.sh, then dd_run_move()" else "nothing"
+
+  if (nrow(dr)) {
+    # Report the earliest drifted stage first, and recommend it: re-running a
+    # stage implies re-running the ones after it, so the earliest is the only
+    # useful next step.
+    short <- function(s, n = 44L) {
+      if (nchar(s) > n) paste0(substr(s, 1L, n - 3L), "...") else s
+    }
+    for (stage in intersect(names(dd_stage_keys), dr$stage)) {
+      message("  config changed since ", stage, " ran:")
+      sub <- dr[dr$stage == stage, , drop = FALSE]
+      for (i in seq_len(nrow(sub))) {
+        message("    ", sub$key[i], ": ", short(sub$was[i]), " -> ",
+                short(sub$now[i]))
+      }
+    }
+    first <- intersect(names(dd_stage_keys), dr$stage)[[1]]
+    nxt <- paste0(dd_stage_cmd[[first]], "   # config changed")
+  }
   message("  next: ", nxt)
   invisible(out)
-}
-
-# ---------------------------------------------------------------------------
-# migration from the old layout
-# ---------------------------------------------------------------------------
-
-#' Move a legacy `config.yml` into its work directory.
-#'
-#' @param path Existing config file written under the old convention.
-#' @param remove Delete the original after a successful copy.
-#' @return The new work directory, invisibly.
-#' @export
-dd_migrate <- function(path = "config.yml", remove = FALSE) {
-  user <- yaml::read_yaml(path)
-  wd <- dd_resolve_path(user$work_dir %||% "work")
-  if (identical(wd, dd_resolve_path(dirname(path)))) {
-    message("dundee: ", path, " is already inside its work directory.")
-    return(invisible(wd))
-  }
-  dir.create(wd, recursive = TRUE, showWarnings = FALSE)
-  dest <- file.path(wd, "config.yml")
-  if (file.exists(dest)) {
-    stop("dundee: ", dest, " already exists; move or remove it first.",
-         call. = FALSE)
-  }
-  lines <- grep("^\\s*(work_dir|temp_dir)\\s*:", readLines(path),
-                value = TRUE, invert = TRUE)
-  writeLines(lines, dest)
-  if (isTRUE(remove)) unlink(path)
-  message("dundee: config moved to ", dest,
-          if (!isTRUE(remove)) paste0("\n  the old file at ", path,
-                                      " can now be deleted"),
-          "\n  then: dd_use(\"", wd, "\")")
-  invisible(wd)
 }

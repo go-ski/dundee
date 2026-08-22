@@ -33,33 +33,36 @@ dd_config_defaults <- function() {
     # SQLite store filename, always resolved under the work directory.
     db_path = "dundee.sqlite",
     # Number of parallel fingerprint workers.
-    parallel = 4L,
+    parallel = 8L,
     # File extensions to include.
     extensions = dd_default_extensions,
     # Names to prune during enumeration.
     cruft = dd_default_cruft,
     # Perceptual fingerprint geometry. dHash on a (grid x grid) grayscale image
     # yields grid*grid bits.
-    fingerprint_grid = 8L,
+    fingerprint_grid = 16L,
     # Default near-duplicate Hamming distance threshold (inclusive).
-    hamming_threshold = 5L,
+    hamming_threshold = 3L,
     # Number of LSH bands used to block near-duplicate candidates.
-    lsh_bands = 8L,
-    # Ordered list of bulk preference rules (first match wins as tie-breakers
-    # are applied in order). Supported: max_pixels, max_filesize, max_meta,
-    # oldest_capture, folder_priority.
+    lsh_bands = 16L,
+    # Ordered list of bulk preference rules. All of them are applied, in
+    # sequence, as lexicographic tie-breakers; photo_id breaks any tie left
+    # over. Supported: max_pixels, max_filesize, max_meta, oldest_capture,
+    # folder_priority.
     preference_rules = c("max_pixels", "max_filesize", "max_meta",
                          "oldest_capture"),
     # Folders (relative to library_root) that win when folder_priority is used,
     # most-preferred first.
     folder_priority = character(0),
-    # Phase 3: SSH target and path translation.
-    ssh_host = NULL,
-    ssh_user = NULL,
-    # Map the Mac SMB mount root to the Synology server-side absolute path.
-    # e.g. smb_root "/Volumes/photo" -> nas_root "/volume1/photo".
-    nas_root = NULL,
-    # Destination roots (server-side, absolute) for the two output trees.
+    # How many originals the review app keeps cached locally for its comparison
+    # viewer. Bounded because these are full-size files: ~300 MB for 100 JPEGs,
+    # but approaching 1 GB for 100 TIFF or RAW derivatives. Evicted
+    # least-recently-used; nothing else depends on it, so it is safe to lower.
+    review_cache = 100L,
+    # Phase 3 destination roots for the two output trees. Local paths, and
+    # required to be under library_root: dundee no longer moves anything itself,
+    # it writes a script the user runs against the mounted library, and a move
+    # within one share is a server-side rename rather than a copy over the wire.
     preferred_root = NULL,
     nonpreferred_root = NULL
   )

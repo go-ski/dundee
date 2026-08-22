@@ -16,7 +16,8 @@ dd_import_staging(con, cfg, quiet = FALSE, prune = TRUE)
 \item{prune}{Logical; delete each shard once it has merged successfully.}
 }
 \value{
-A list with counts \code{photos} and \code{errors}, invisibly.
+A list with counts \code{photos}, \code{errors} and \code{cleared} (stale error
+rows removed), invisibly.
 }
 \description{
 Shards are merged oldest-run-first, so a path that appears in more than one
@@ -26,4 +27,10 @@ can re-apply a stale row and the returned counts are rows merged \emph{this} run
 rather than every row ever staged. Pass \code{prune = FALSE} to keep the shards
 for debugging; an interrupted merge leaves exactly the not-yet-merged shards
 behind, and re-running is safe because the upsert is idempotent.
+}
+\details{
+A file that failed to decode on an earlier run and fingerprints successfully
+now has its \code{errors} row dropped, so \code{dd_status()}'s "unreadable" count
+reflects the current state of the library rather than every failure ever
+seen.
 }

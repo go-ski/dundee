@@ -25,7 +25,7 @@ db_path: dundee.sqlite
 
 # Concurrent fingerprint workers. Over SMB the network, not the CPU, is
 # usually the limit; 4-8 is typical, higher can thrash the mount.
-parallel: 4
+parallel: 8
 
 # Extensions to inventory (lowercase, no dot). Trim this to speed up
 # enumeration if your library has no RAW files.
@@ -37,26 +37,31 @@ extensions: [jpg, jpeg, jpe, png, gif, bmp, tif, tiff, webp,
 # Directory and file names pruned during enumeration (Synology + macOS junk).
 cruft: ['@eaDir', '#recycle', '#snapshot', '@tmp', .@__thumb, '@sharebin',
         .DS_Store, Thumbs.db, .Spotlight-V100, .TemporaryItems,
-        .Trashes, .fseventsd]
+        .Trashes, .fseventsd, _dedup]
 
 # --- near-duplicate tuning -------------------------------------------------
 
 # dHash geometry: an N x N grid gives N^2 bits. FIXED ONCE INVENTORY HAS RUN --
 # fingerprints of different geometries cannot be compared, so changing this
 # means re-fingerprinting the whole library in a fresh work directory.
-fingerprint_grid: 8
+fingerprint_grid: 16
 
 # Maximum Hamming distance (inclusive) for two photos to be called near
-# duplicates. 0-3 = very tight (re-saves, crops of a few pixels); 5 = default;
-# 10+ starts merging different frames of the same scene. Safe to change and
-# re-run analyze: grouping is recomputed from stored fingerprints.
-hamming_threshold: 5
+# duplicates. Read it as a fraction of the bit budget, not as an absolute: an
+# N x N grid gives N^2 bits, so the same number is far tighter on a finer grid.
+# At the default 16x16 (256 bits): 3 is very tight -- re-saves and crops of a
+# few pixels. Around 20 (~8% of the budget) is a normal near-duplicate setting,
+# and 40+ starts merging different frames of the same scene. Those two are
+# scaled guidance, not measurements. Safe to change and re-run analyze:
+# grouping is recomputed from stored fingerprints.
+hamming_threshold: 3
 
 # LSH bands used to block candidate pairs. Must divide fingerprint_grid^2.
 # More bands = more candidates examined = higher recall, slower analyze.
-# For b bands over 64 bits, a pair at distance d collides with probability
-# 1 - (1 - (1 - d/64)^(64/b))^b; b = 8 gives ~0.997 at d = 5.
-lsh_bands: 8
+# For b bands over n bits, a pair at distance d collides with probability
+# 1 - (1 - (1 - d/n)^(n/b))^b; b = 16 over 256 bits gives ~1.000 at d <= 10 and
+# ~0.994 at d = 20, decaying past 30.
+lsh_bands: 16
 
 # --- choosing the preferred copy -------------------------------------------
 
@@ -66,20 +71,51 @@ lsh_bands: 8
 preference_rules: [max_pixels, max_filesize, max_meta, oldest_capture]
 
 # Folders (relative to library_root), most-preferred first. Only consulted
-# when folder_priority appears in preference_rules above.
+# when folder_priority appears in preference_rules above -- list it FIRST there
+# to let the tree decide and the rules above break what it leaves tied.
+#
+# Entries match whole path segments, so `G_EOS` covers `G_EOS/x.jpg` but not
+# `G_EOS6D/x.jpg`. Name a directory at any depth (`Old/Aperture` is fine).
+#
+# dd_run_folders() -- `dundee folders` from a shell -- prints the duplicate
+# groups summarised by the directories they span, which is where a ranking
+# comes from. dd_run_folders(effect = TRUE) (`--effect`) then reports what the
+# ranking below would decide, and every group it would decide differently than
+# preference_rules decides it now.
 folder_priority: []
 
-# --- phase 3: server-side moves --------------------------------------------
+# --- review app -------------------------------------------------------------
+
+# How many full-size originals the review app keeps on local disk for its
+# side-by-side viewer. Each group you open is read once and everything --
+# metadata, thumbnail, viewer image -- comes from that read; these files are
+# what let the viewer open without going back to the library.
+#
+# Budget for it: 100 JPEGs is roughly 300 MB, but 100 TIFF or RAW copies can
+# approach 1 GB. Least-recently-used entries are dropped. 0 disables the
+# viewer's cache entirely; nothing else depends on it.
+review_cache: 100
+
+# --- phase 3: the move ------------------------------------------------------
 # Only needed for `plan` and `move`. Inventory and analyze ignore these.
-
-ssh_user: admin
-ssh_host: nas.local
-
-# The server-side path that library_root is mounted from, e.g. the Mac sees
-# ~/photo-ro where the NAS sees /volume1/photo.
-nas_root: /volume1/photo
-
-# Server-side destination trees. Relative paths from library_root are
-# preserved under each. dundee only ever moves; it never deletes.
-preferred_root: /volume1/photo/_dedup/preferred
-nonpreferred_root: /volume1/photo/_dedup/non-preferred
+#
+# dundee never moves anything itself. `plan` writes moves.sh into the work
+# directory; you remount the library read-write, run it, and then `move`
+# reconciles the store against what actually happened.
+#
+# A default run of moves.sh moves the non-preferred copies into
+# nonpreferred_root and leaves each group's preferred copy exactly where it is
+# -- which is already a library without duplicates. preferred_root is used only
+# when you run `moves.sh --include-preferred`.
+#
+# Both roots MUST be under library_root. A move within one mount is a rename --
+# instant, and no bytes cross the wire however large the photos. A move to
+# another volume would copy every duplicate down and delete the original.
+# Relative paths from library_root are preserved under each. dundee only ever
+# moves; it never deletes.
+#
+# Note the `_dedup` entry in `cruft` above: these trees live inside the
+# enumerated library, so without pruning them the next inventory would walk
+# them and file every moved photo as a new one.
+preferred_root: ~/photo-ro/_dedup/preferred
+nonpreferred_root: ~/photo-ro/_dedup/non-preferred

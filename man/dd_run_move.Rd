@@ -2,26 +2,41 @@
 % Please edit documentation in R/run.R
 \name{dd_run_move}
 \alias{dd_run_move}
-\title{Execute the planned moves server-side over SSH.}
+\title{Reconcile the store with the moves the script actually made.}
 \usage{
-dd_run_move(config = NULL, execute = FALSE)
+dd_run_move(config = NULL, quiet = FALSE)
 }
 \arguments{
 \item{config}{A work directory, a config path, or a list from \code{\link[=dd_config]{dd_config()}}.}
 
-\item{execute}{Logical; perform the moves instead of describing them.}
+\item{quiet}{Logical; suppress the phase banner.}
 }
 \value{
-\code{TRUE}, invisibly.
+Invisibly, a named integer vector: \code{done} and \code{kept} counts.
 }
 \description{
-Dry run by default: prints what would be streamed to the server. Pass
-\code{execute = TRUE} to perform the on-volume renames. The generated script is
-idempotent, so an interrupted run can simply be repeated.
+dundee does not move anything: \code{\link[=dd_run_plan]{dd_run_plan()}} writes \code{moves.sh} and you run
+it. This reads what happened and marks the batch done -- first from
+\code{moves.done.tsv}, the receipt the script appends to, then by checking the
+library itself for any planned photo the receipt does not cover, so a script
+you edited, interrupted or replaced with your own still reconciles.
+}
+\details{
+A photo counts as moved when its source is gone \emph{and} its destination is
+there. A source that has vanished with nothing at the destination is
+reported and left planned: something other than the move script removed it,
+and calling that done would hide it.
+
+By default \code{moves.sh} leaves each group's preferred copy where it is, and
+records those in \code{moves.kept.tsv}. They are marked \code{kept} rather than \code{done}
+-- no move happened -- but they no longer count as outstanding work. Running
+the script again with \code{--include-preferred} moves them for real, and a second
+reconcile turns \code{kept} into \code{done}.
 }
 \examples{
 \dontrun{
-dd_run_move("config.yml")                  # dry run
-dd_run_move("config.yml", execute = TRUE)  # for real
+dd_run_plan(bulk = TRUE)   # writes moves.sh
+# ... remount the library read-write and run moves.sh ...
+dd_run_move()
 }
 }

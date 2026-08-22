@@ -27,7 +27,12 @@ dd_plan_moves(
 The manifest data.frame, invisibly.
 }
 \description{
-Writes nothing destructive: produces a TSV manifest, a reviewable NUL-safe
-shell script of \code{mkdir -p}/\code{mv} commands (to be run server-side), and records
-planned rows in the \code{moves} table. Re-runnable.
+Writes nothing destructive and touches nothing in the library: produces a TSV
+manifest, a self-contained shell script for you to review and run, and
+records planned rows in the \code{moves} table. Re-runnable.
+}
+\details{
+The script takes \code{--dry-run}, refuses to start unless the library is mounted
+and writable, and appends every completed move to \code{moves.done.tsv} beside
+itself. \code{\link[=dd_run_move]{dd_run_move()}} reads that afterwards to mark the batch done.
 }

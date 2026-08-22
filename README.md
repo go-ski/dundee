@@ -15,7 +15,7 @@ works with this list to produce duplicate groups using smart cluster analysis te
 
 ## **move**
 
-moves the preferred and non-preferred copies into separate folders that can later be moved elsewhere or deleted
+writes a shell script that moves the non-preferred copies out into a folder of their own — inside the library, so each move is a rename rather than a copy — which you review and run yourself. Each group's preferred copy stays exactly where it always was, which is already a library without duplicates; `--include-preferred` relocates those too if you want both tiers gathered. dundee never touches the library; it reads back afterwards what actually happened, and the quarantined folder can later be moved elsewhere or deleted
 
 ---
 
@@ -23,13 +23,14 @@ moves the preferred and non-preferred copies into separate folders that can late
 
 Built in **R and POSIX/bash only** (no Python). Heavy lifting is done by
 purpose-built CLI tools driven from shell — `vips`/`vipsheader`/`vipsthumbnail`,
-`exiftool`, `b3sum`, `find`/`stat`/`awk`/`xargs`, `ssh` — with R
+`exiftool`, `b3sum`, `find`/`stat`/`awk`/`xargs` — with R
 (an installable package) for assembly, clustering, the review UI, and move
 planning. The single source of truth is a **SQLite** store inside the work
 directory.
 
-Per photo, the inventory worker reads each original across SMB **exactly once**
-(copy to local temp, then derive everything locally) and records four signals:
+Per photo, the inventory worker reads each original's **pixels across SMB
+exactly once** (copy to local temp, then derive everything locally) and records
+four signals:
 
 | Signal | Catches | Used to form groups? |
 |---|---|---|
@@ -42,17 +43,50 @@ Only the decoded-pixel hash and the fingerprint determine group membership. The
 file hash and metadata hash are stored for inspection and provenance; the
 metadata *line count* feeds the `max_meta` preference rule.
 
+The metadata lines are sorted under `LC_ALL=C` before hashing. Byte order is
+the only order that is the same on every machine, and it is the only one that
+cannot fail: a UTF-8 collation makes `sort` abort on an EXIF tag holding
+Latin-1 or Shift-JIS bytes, which is common in `Artist` and `Model`.
+
 Analyze forms **exact** groups by decoded-pixel hash, then **near** groups by
 Hamming distance with LSH blocking (tunable threshold) over whatever is left —
 a photo already placed in an exact group is not considered for the near tier.
-The Shiny app shows each group's thumbnails + metadata and records the preferred
-copy. Move translates Mac SMB paths to Synology server-side paths and performs
-on-volume `mv` over SSH — marking first, moving second, deleting never.
+The Shiny app compares the copies in a group and records the preferred one.
+Move writes a shell script of guarded `mv` commands and stops there; you review
+it, remount the library read-write and run it, and `dundee move` reads back what
+happened — marking first, moving second, deleting never. By default only the
+rejects move.
+
+### Reviewing a group
+
+Opening a group reads each of its originals **once** and derives everything from
+that read — the thumbnail, the full metadata, and a full-size local copy for the
+comparison viewer. Nothing is added to the fingerprint pipeline, so none of this
+requires re-inventorying.
+
+The display is a *difference*, not a list of values: attributes every copy
+agrees on collapse into one `identical:` line, and only what differs is shown,
+with the better value marked where there is a defensible direction. It reports
+which preference rule actually decided the group and by what margin, and says so
+plainly when no rule separated them and the winner came from the `photo_id`
+tie-break.
+
+Location and capture date are the exception — they are shown under every
+thumbnail whether or not they differ, since they are what decisions turn on.
+The capture date is `DateTimeOriginal`, falling back to `CreateDate` with the
+fallback labelled. Coordinates are decimal, with a `[map]` link; that link is
+the only outbound request the app can make, and only if you click it.
+
+"Compare full size" opens a movable, resizable viewer with synchronised pan and
+zoom and an A/B flip for spotting compression differences. TIFF, HEIC and RAW
+are converted to a lossless PNG first, since no browser will display them;
+JPEG, PNG and the other web formats are served byte for byte, because judging
+compression artifacts against a re-encode would be judging the re-encode.
 
 ## Requirements
 
 ```sh
-brew install vips exiftool b3sum     # ssh ships with macOS
+brew install vips exiftool b3sum
 ```
 
 `b3sum` is optional: if it is absent, `shasum -a 256` is used for every hash
@@ -60,25 +94,27 @@ instead. Hashes are not comparable between the two, so don't change hashing
 tools partway through a library.
 
 R packages: `DBI`, `RSQLite`, `base64enc`, `yaml`; plus `shiny` and `bslib` for
-the review app, and `pkgload` if you want to run `run.sh` against an
+the review app, and `pkgload` if you want to run `exec/dundee` against an
 uninstalled source tree. Install the package once with `R CMD INSTALL .`, or run
-directly from the source tree (the scripts fall back to `pkgload::load_all()`).
+directly from the source tree (the launcher falls back to `pkgload::load_all()`).
 
-Two notes on `dd_preflight()`:
+The shell launcher installs with the package, so once dundee is installed you
+can put it on your PATH and drop the `./` prefix used below:
 
-- it checks for `ssh`, which is needed only for Phase 3, so it will report
-  "missing requirements" on a machine that can nonetheless run inventory and
-  analyze perfectly well;
-- it checks for the `sqlite3` command-line tool, which the package itself never
-  calls — all store access goes through RSQLite. Only `tests/e2e.sh` uses the
-  CLI.
+```sh
+ln -s "$(Rscript -e 'cat(system.file("exec", "dundee", package = "dundee"))')" ~/bin/dundee
+```
 
-**Run under a UTF-8 locale** (`en_US.UTF-8`, `C.UTF-8`, …). Under `C`/`POSIX`,
-filenames containing non-ASCII characters are stored in escaped form, which
-breaks the resume filter for those files (they are re-read on every run) and
-makes their entries in the generated move script point at paths that do not
-exist. This matters mostly for non-interactive contexts — `cron`, `launchd`,
-`ssh` without a TTY — which commonly default to `C`.
+`dd_preflight()` fails only on tools every run needs. `vipsthumbnail` (the
+review app) is reported as a warning, so a machine that can run inventory and
+analyze reports `preflight: ready.` Phase 3 needs no tool at all: the move is a
+shell script you run.
+
+> `exec/dundee` prefers an **installed** dundee over the source tree it sits in.
+> When you are changing the package, either re-run `R CMD INSTALL .` or point
+> `R_LIBS` at a scratch library first, or you will be running the last version
+> you installed. `Rscript dev-test.R` always uses the source tree, and
+> `tests/e2e.sh` installs to a throwaway library of its own.
 
 ## If using for Synology Photos
 
@@ -88,6 +124,20 @@ Mount the shared Synology photos directory read-only at `photo-ro`:
 mkdir "$HOME/photo-ro"
 mount_smbfs -o rdonly "//<username>@<yourphotoserver>.local/photos" "$HOME/photo-ro"
 ```
+
+Inventory, analyze and review all run against that read-only mount, and dundee
+writes nothing outside its own work directory. Phase 3 is the one point where
+the library has to change, and dundee still does not do it: it hands you
+`moves.sh`. Remount read-write when you are ready to run it —
+
+```sh
+umount "$HOME/photo-ro"
+mount_smbfs "//<username>@<yourphotoserver>.local/photos" "$HOME/photo-ro"
+```
+
+— and remount read-only again once `dundee move` has reconciled the store. The
+script refuses to run against a read-only mount, so there is no way to half-do
+this; `--dry-run` works either way.
 
 ## Quick start
 
@@ -107,9 +157,9 @@ dd_status()                        # what is done, and what is next
 or from a shell:
 
 ```sh
-./run.sh preflight
-./run.sh init ~/dundee/family-photos --library=~/photo-ro
-./run.sh status ~/dundee/family-photos
+./exec/dundee preflight
+./exec/dundee init ~/dundee/family-photos --library=~/photo-ro
+./exec/dundee status ~/dundee/family-photos
 ```
 
 `dd_status()` is safe to run at any point and always names the next step.
@@ -128,53 +178,76 @@ dd_run_inventory()
 
 # Phase 2 — analyze, then review
 dd_run_analyze()
+dd_run_folders()                     # groups summarised by directory
+dd_run_folders(effect = TRUE)        # audit folder_priority before applying it
 dd_app()                             # opens the Shiny review app
 
-# Phase 3 — plan (dry run), review the script, then execute server-side
-dd_run_plan(bulk = TRUE)
-dd_run_move()                        # dry run
-dd_run_move(execute = TRUE)
+# Phase 3 — write the move script, run it yourself, then reconcile
+dd_run_plan(bulk = TRUE)             # writes moves.tsv + moves.sh
+# ... review moves.sh, remount the library read-write, and:
+#       bash <work_dir>/moves.sh --dry-run   # rehearse
+#       bash <work_dir>/moves.sh             # rejects out, winners stay put
+dd_run_move()                        # reads back what actually moved
 ```
 
 Every stage takes an optional first argument naming the project: a work
 directory, or an already-resolved list from `dd_config()`. With `dd_use()` set
 (or `$DUNDEE_WORK`, or a `config.yml` in the working directory) it can be
-omitted. Add `quiet = TRUE` to any call to suppress phase banners and progress
-bars.
+omitted. Add `quiet = TRUE` to any `dd_run_*()` call to suppress phase banners
+and progress bars — for `dd_run_folders()`, whose report *is* its output, that
+silences the report and leaves you the return value to work with.
 
 Passing a path to a `config.yml` also works, but the directory *containing* that
 file then becomes the work directory — so don't point it at the dundee checkout
 unless you want the store, `staging/`, `thumbs/` and `tmp/` created there.
 
+<a id="working-with-the-store"></a>
+A few functions take the **open store** rather than a work directory, because
+they are meant to be composed with your own queries: `dd_apply_bulk_decisions()`,
+`dd_folder_patterns()`, `dd_folder_effect()`. Open it yourself:
+
+```r
+cfg <- dd_config("~/dundee/family-photos")
+con <- dd_db_connect(cfg)
+on.exit(DBI::dbDisconnect(con))
+```
+
+Every `dd_run_*()` wrapper does exactly this internally, so use them unless you
+want the returned data frames rather than the printed report.
+
 ### Usage From the terminal (shell)
 
-`run.sh` is a thin wrapper around the same package; use it when you'd rather
-stay in a shell than an R session:
+`exec/dundee` is a thin wrapper around the same package; use it when you'd
+rather stay in a shell than an R session. It is shown here as run from a source
+checkout; installed and symlinked (see Requirements) it is just `dundee`:
 
 ```sh
-./run.sh preflight                   # verify external tools and R packages
+./exec/dundee preflight                   # verify external tools and R packages
 
-./run.sh init   ~/dundee/family-photos --library=~/photo-ro
-./run.sh config ~/dundee/family-photos
-./run.sh status ~/dundee/family-photos
+./exec/dundee init   ~/dundee/family-photos --library=~/photo-ro
+./exec/dundee config ~/dundee/family-photos
+./exec/dundee status ~/dundee/family-photos
 
 # Phase 1 — inventory (enumerate -> resume-filter -> fingerprint -> merge)
-./run.sh inventory ~/dundee/family-photos [--parallel=N] [--quiet]
+./exec/dundee inventory ~/dundee/family-photos [--parallel=N] [--rebase] [--quiet]
 
 # Phase 2 — analyze, then review
-./run.sh analyze ~/dundee/family-photos [--quiet]
-./run.sh app     ~/dundee/family-photos [--port=N] [--no-browser]
+./exec/dundee analyze ~/dundee/family-photos [--quiet]
+./exec/dundee folders ~/dundee/family-photos [--depth=N] [--effect]
+./exec/dundee app     ~/dundee/family-photos [--port=N] [--no-browser]
 
-# Phase 3 — plan (dry run), review the script, then execute server-side
-./run.sh plan ~/dundee/family-photos --bulk   # writes moves.tsv + moves.sh
-./run.sh move ~/dundee/family-photos          # DRY RUN: prints what would run
-./run.sh move ~/dundee/family-photos --execute
+# Phase 3 — write the move script, run it yourself, then reconcile
+./exec/dundee plan ~/dundee/family-photos --bulk   # writes moves.tsv + moves.sh
+bash ~/dundee/family-photos/moves.sh --dry-run     # rehearse; touches nothing
+bash ~/dundee/family-photos/moves.sh               # move the non-preferred out
+./exec/dundee move ~/dundee/family-photos          # reconcile the store
 ```
 
 The positional argument is a work directory. With none, dundee resolves, in
 order: `options(dundee.work_dir)` (set by `dd_use()`), `$DUNDEE_WORK`,
-`$DUNDEE_CONFIG`, `./config.yml`, `./work/config.yml`. Unknown options are
-rejected rather than silently ignored.
+`$DUNDEE_CONFIG`, `./config.yml`, `./work/config.yml`. Options are validated
+per command, so an option that is real but wrong for the command you typed
+(`status --bulk`) is rejected rather than silently ignored.
 
 Each stage prints a phase banner plus progress as it runs (a live count during
 fingerprinting, progress bars for merge/analyze/plan) whether run from R or the
@@ -186,18 +259,98 @@ one-line summaries are still printed.
 Every stage is idempotent and re-runnable.
 
 - Re-running **inventory** re-reads only files that are new, whose size or
-  mtime has changed, or that previously failed to decode — rows in the `errors`
-  table are not in `photos`, so they are retried on every run in case the file
-  has become readable.
+  mtime has changed, or that previously failed to decode — a path in the
+  `errors` table has no `photos` row, so it is retried on every run in case the
+  file has become readable (and its error row is dropped once it is).
 - `staging/` holds one shard per fingerprint worker. Shards are merged
   oldest-run-first and removed as soon as they merge, so "merged N photo
   row(s)" is the number of rows written by *this* run. If a merge is
   interrupted, the unmerged shards are still there and the next run picks
   them up.
 - Re-running **analyze** recomputes grouping from stored fingerprints; nothing
-  is re-read from the library.
-- The generated **move** script guards every command with `[ -e source ]` and
-  uses `mv -n`, so an interrupted run can simply be repeated.
+  is re-read from the library. A group's id is derived from its members, not
+  from the order they happen to come out of the store, so decisions you have
+  already recorded keep pointing at the same photos as the library grows.
+  A photo that ends up in *no* group — because you tightened
+  `hamming_threshold`, say — loses its decision and any move still only
+  planned, so dundee stops relocating photos it no longer calls duplicates.
+  That discards a manual choice too, since the group it described is gone;
+  moves already marked done are history and are kept.
+- The generated **move** script moves only the non-preferred copies unless you
+  pass `--include-preferred`, so the default run leaves each group's winner
+  exactly where it has always been. It guards every move with `[ -e source ]`
+  and uses `mv -n`, so an interrupted run can simply be repeated. It refuses to start
+  unless the library is mounted, non-empty and writable, and it records one
+  failure without abandoning the rest of the batch. dundee itself never writes
+  to the library at any phase, including this one.
+
+### Deciding by directory
+
+A library gains duplicates by being copied wholesale — an old app's managed
+library, a scanner's output, a backup folder — so which copy to keep is usually
+a property of the *tree*, not of the file. That makes the directory structure a
+far shorter description of the problem than the group list: tens of thousands of
+groups typically collapse to a few dozen directory patterns.
+
+```r
+dd_run_folders()          # duplicate groups summarised by the directories they span
+```
+```sh
+dundee folders            # the same, from a shell
+```
+
+```
+groups photos dirs  pattern
+ 23626  47252    2  F_2010 + LaCie_ApertureLibrary
+  3181   6379    2  LaCie_ApertureLibrary + ScanAlex
+  1688   3376    1  G_EOS
+  1558   4674    3  F_2010 + G_EOS + LaCie_ApertureLibrary
+```
+
+`dirs` is how many directories the pattern spans. **`1` means every copy is in
+one directory**, where `folder_priority` cannot help and the quality rules or
+the review app must decide; `depth = 2` (`--depth=2`) looks inside those.
+
+Rank the directories in `config.yml` — most-preferred first, `folder_priority`
+listed first in `preference_rules` so the tree decides and the other rules break
+what it leaves tied — then check the ranking before writing anything:
+
+```r
+dd_run_folders(effect = TRUE)
+```
+```sh
+dundee folders --effect
+```
+
+```
+  folder_priority decides 34140 of 35942 group(s); 1802 fall through to max_pixels, ...
+  945 group(s) would be decided DIFFERENTLY than preference_rules decides them today
+```
+
+That last number is the reason to look. The quality rules are often *arbitrary*
+rather than wrong: between two byte-identical copies `max_pixels` cannot
+discriminate at all and `max_filesize` decides on JPEG encoding noise, so a
+handful of groups land on the copy you would never have chosen — invisibly,
+spread through the largest pattern. The audit writes nothing; when the
+disagreements look right, apply them ([`con` and `cfg`](#working-with-the-store)):
+
+```r
+dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)
+```
+
+`overwrite = TRUE` is required: edited rules do not re-apply to photos that
+already have a decision (see [Editing config.yml
+afterwards](#editing-configyml-afterwards)).
+
+To try a ranking *without* editing `config.yml` first, pass it straight to the
+audit — the same call `dd_run_folders(effect = TRUE)` makes underneath, and it
+returns every disagreeing group rather than the first few:
+
+```r
+eff <- dd_folder_effect(con, cfg, c("F_2010", "G_EOS", "LaCie_ApertureLibrary"))
+eff$by_folder     # groups the tree settles on its own
+eff$differs       # every group this ranking would change
+```
 
 ## What lives where
 
@@ -205,27 +358,30 @@ Every stage is idempotent and re-runnable.
 <work_dir>/
   config.yml            the only file you edit
   config.resolved.yml   snapshot written by every stage (provenance; do not edit)
-  config.history/       timestamped copies of prior config.yml
-  dundee.sqlite         the store
+  config.history/       prior config.yml, saved by dd_init(overwrite = TRUE)
+  dundee.sqlite         the store (plus -wal/-shm while it is open)
   enum.tsv  todo.nul    inventory intermediates
   staging/              per-worker fingerprint shards
   tmp/                  fingerprint worker scratch space
   thumbs/               review-app thumbnail cache
-  moves.tsv  moves.sh   Phase 3 plan
+  originals/            review-app full-size cache (bounded by review_cache)
+  moves.tsv  moves.sh   Phase 3 plan, and the script you run
+  moves.done.tsv        what the script moved; read by `move` (with
+  moves.failed.tsv      anything that failed, and why, and
+  moves.kept.tsv        the preferred copies it left in place)
 ```
 
 ## Key configuration
 
-See `config.example.yml`, which is the same annotated template `dd_init()`
-installs.
+See `inst/templates/config.yml`, the annotated template `dd_init()` installs.
+(From an installed dundee, `dd_config_example("somewhere.yml")` writes the same
+file wherever you want to read it.)
 
-A dundee project is a **directory**, and `config.yml` lives inside it. There is
-no `work_dir:` key — the work directory *is* the directory the config is in.
-Everything dundee writes for one library sits beside the config; to work on a
-second library, make a second work directory. There is no `temp_dir:` key
-either: scratch is always `<work_dir>/tmp`. (A legacy `work_dir:` entry is still
-honoured, with a message pointing at `dd_migrate()`, which relocates an old-style
-config into its work directory.)
+A dundee project is a **directory**, and `config.yml` lives inside it. The work
+directory *is* the directory the config is in, so there is no `work_dir:` key and
+no `temp_dir:` key — scratch is always `<work_dir>/tmp`. Everything dundee writes
+for one library sits beside the config, which is what makes a second library a
+second directory rather than a second set of paths to keep in step.
 
 The **only path you must set** is:
 
@@ -243,54 +399,90 @@ Everything else is tuning, not paths:
 - `preference_rules` — an ordered list applied as lexicographic tie-breakers
   (all rules, in sequence; `photo_id` breaks any remaining tie). One of
   `max_pixels`, `max_filesize`, `max_meta`, `oldest_capture`, `folder_priority`.
+  `max_meta` distinguishes a photo whose metadata could not be read (stored as
+  NULL, ranked last, and counted by `dd_status()`) from one that genuinely
+  carries none (stored as 0); ties among unreadable photos still fall through
+  to the remaining rules.
 - `folder_priority` — folders relative to `library_root`, most-preferred first;
-  consulted only when `folder_priority` appears in `preference_rules`.
-- `nas_root` — the Synology server-side path the SMB mount corresponds to
-  (e.g. `~/photo-ro` ↔ `/volume1/photo`).
-- `preferred_root` / `nonpreferred_root` — server-side output trees.
-- `ssh_user` / `ssh_host` — SSH target for server-side moves.
+  consulted only when `folder_priority` appears in `preference_rules`. Entries
+  match whole path segments, so `G_EOS` covers `G_EOS/x.jpg` but not
+  `G_EOS6D/x.jpg`. See [Deciding by directory](#deciding-by-directory).
+- `review_cache` — how many full-size originals the review app keeps in
+  `originals/` for its comparison viewer, least-recently-used evicted first
+  (default 100). Budget for it: 100 JPEGs is roughly 300 MB, but 100 TIFF or RAW
+  copies can approach 1 GB. `0` disables the viewer's cache; nothing else
+  depends on it, and `dd_cache_clear()` empties it at any time.
+- `preferred_root` / `nonpreferred_root` — the two output trees.
+  `nonpreferred_root` is where a default run puts the rejects; `preferred_root`
+  is used only when you run `moves.sh --include-preferred`. **Both must be
+  under `library_root`**, and `plan` refuses otherwise: a move within one mount
+  is a rename, instant and with no bytes crossing the wire, while a move to
+  another volume copies every duplicate down and deletes the original. Relative
+  paths from `library_root` are preserved under each.
 
-The last four are needed only for `plan` and `move`; inventory and analyze
-ignore them.
+  Because they sit inside the enumerated library, name the directory holding
+  them in `cruft` (the template ships `_dedup`) or the next inventory will walk
+  the moved copies and file them as new photos. `plan` warns if you haven't.
+
+These two are needed only for `plan` and `move`; inventory and analyze ignore
+them.
 
 Two values are frozen by the store on first use and are errors to change
 afterwards: `fingerprint_grid` (fingerprints of different geometries are not
-comparable) and `library_root` (every stored path is absolute). Changing either
-means starting a fresh work directory.
+comparable) and `library_root` (every stored path is absolute). A changed grid
+means starting a fresh work directory. A changed `library_root` is recoverable
+**when it is the same library re-mounted elsewhere**: re-run inventory with
+`rebase = TRUE` (`--rebase`) and every stored path is rewritten onto the new
+root. Do not use it to point a store at a different library.
 
-`hamming_threshold` is safe to change at any time — re-run analyze and grouping
-is recomputed from the stored fingerprints.
+### Editing config.yml afterwards
 
-> On `lsh_bands`: the collision probability quoted in `config.example.yml` is the
+`config.yml` is meant to be hand-edited. Every stage records the settings it ran
+under, and `dd_status()` compares them against the file, so after an edit it
+names what changed and what to re-run:
+
+```
+  config changed since analyze ran:
+    hamming_threshold: 5 -> 3
+  next: dd_run_analyze()   # config changed
+```
+
+| Edited key | Re-run |
+|---|---|
+| `extensions`, `cruft` | inventory |
+| `hamming_threshold`, `lsh_bands` | analyze |
+| `preference_rules`, `folder_priority` | see the caveat below |
+| `preferred_root`, `nonpreferred_root` | plan |
+| `parallel`, `db_path`, `review_cache` | nothing — no stored artifact depends on them |
+
+When more than one stage has drifted, `dd_status()` recommends the earliest,
+since re-running it carries the later ones with it.
+
+Two caveats it cannot fix for you:
+
+- **Narrowing `extensions` or widening `cruft`** leaves rows for files that are
+  no longer candidates. Re-running inventory picks up newly-eligible files but
+  never removes ineligible ones; only a fresh work directory does that.
+- **`preference_rules` and `folder_priority` do not re-apply to existing
+  decisions.** `dd_run_plan(bulk = TRUE)` skips every photo that already has a
+  decision, so the edited rules affect only photos decided afterwards. To apply
+  them to what is already decided, call
+  `dd_apply_bulk_decisions(con, cfg, overwrite = TRUE)` directly
+  ([`con` and `cfg`](#working-with-the-store)) — which also discards any manual
+  choices made in the review app.
+
+`hamming_threshold` is otherwise safe to change at any time — re-run analyze and
+grouping is recomputed from the stored fingerprints. Note that *tightening* it
+can dissolve a group, and photos left in no group at all lose their decisions
+(see Resumability).
+
+> On `lsh_bands`: the collision probability quoted in the config template is the
 > standard bit-sampling LSH result, which assumes the differing bits are spread
 > uniformly over positions and that bands are independent. dHash bits are
 > adjacent-pixel comparisons, so they are spatially correlated, and real edits
 > perturb contiguous runs of bits. In practice recall is *better* than the formula
 > for localised edits (crops, re-saves, small resizes) and *worse* for global tonal
 > changes that flip comparisons all over the frame. Treat the number as a guide.
-
-## Known issues
-
-Current as of this revision; delete entries as they are fixed.
-
-- **The review app does not start.** `dd_app()` and `run.sh app` fail
-  immediately with `subscript out of bounds` from `dd_phase()`, because `"app"`
-  is missing from the internal phase-ordinal table. Bulk decisions are still
-  available via `dd_run_plan(bulk = TRUE)`.
-- **`dd_config()` touches `library_root`.** The case-sensitivity probe creates
-  and deletes a `.dundee-Case-<pid>` file in each directory it tests, including
-  the library root. On a genuinely read-only mount the write fails and dundee
-  falls back to assuming case-insensitive on macOS, so behaviour is correct
-  there — but the library's directory mtime does change if it happens to be
-  writable, and `tests/e2e.sh` fails on a clean checkout for this reason.
-- **`rebase = TRUE` is not reachable.** If `library_root` changes, the store
-  guard errors and advises re-running with `rebase = TRUE`, but no exported
-  function or CLI flag accepts it. Until this is wired up, the recovery is a
-  fresh work directory.
-- **Non-ASCII filenames under a non-UTF-8 locale** — see Requirements above.
-- `dd_status()` reports a `moves ... done` count, but nothing ever sets a move
-  row's state to `done`; after a successful `move --execute` the status line
-  still suggests running it.
 
 ## Troubleshooting
 
@@ -299,21 +491,23 @@ restore the original value, or start a new work directory and re-fingerprint.
 Fingerprints of different geometries cannot be compared.
 
 **"this store was built against library_root … but config.yml now says …"** —
-the mount moved. See Known issues; for now, a fresh work directory.
+the mount moved. If it is the same library at a new path, re-run inventory with
+`--rebase` (or `dd_run_inventory(rebase = TRUE)`) to rewrite the stored paths.
+If it is a different library, start a fresh work directory.
 
 **"unknown config key 'hamming_thresold' — did you mean 'hamming_threshold'?"** —
 a typo. Unknown keys warn and are ignored, so fix it before the run matters.
 
 **Photos with accented or non-Latin names are re-fingerprinted every run** —
-your locale is `C`/`POSIX`. Set `LC_ALL` to a UTF-8 locale and start a fresh
-work directory (the paths already in the store are mangled).
-
-**`preflight: missing requirements` but only `ssh` is missing** — that is fine
-for phases 1 and 2; you only need `ssh` for `move`.
+the store holds those paths in escaped form, so the resume filter never matches
+them. Paths are written as UTF-8 bytes now, so this cannot recur; a store that
+already has them needs a fresh work directory once.
 
 **Files that vips cannot decode** are logged to the `errors` table rather than
 fingerprinted, and are retried on each inventory run. `dd_status()` reports the
-count as "unreadable".
+count as "unreadable"; once a file reads successfully its error row is dropped,
+so the count tracks the library rather than accumulating every failure ever
+seen.
 
 ## Development
 
@@ -322,8 +516,11 @@ Rscript dev-test.R                   # unit tests (testthat), no install needed
 bash tests/e2e.sh                    # full pipeline on a generated fixture set
 ```
 
-`tests/e2e.sh` currently reports `FAIL: library was written to` on a clean
-checkout — see Known issues. Every other assertion passes.
+`tests/e2e.sh` installs the package into a throwaway library and runs against
+that, so it always tests the working tree rather than whatever you installed
+last. It asserts, among other things, that nothing under `library_root` was
+written to — so it also serves as the regression test for the read-only
+guarantee.
 
 > HEIC/HEIF: handled when libvips is built with libheif. Verify with
 > `vips --vips-config | tr ',' '\n' | grep -i heif` (expect

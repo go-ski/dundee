@@ -2,7 +2,7 @@
 "_PACKAGE"
 
 ## usethis namespace: start
-#' @import DBI
+## DBI is not imported wholesale: every call site is already DBI::-qualified.
 #' @importFrom RSQLite SQLite
 #' @importFrom base64enc base64decode
 #' @importFrom yaml read_yaml as.yaml

@@ -69,10 +69,45 @@ dd_db_init <- function(con) {
        dest        TEXT NOT NULL,
        state       TEXT NOT NULL DEFAULT 'planned',
        moved_at    TEXT
+     );",
+    # Rich per-photo metadata for the review app, cached from one read of the
+    # original. Purely derived -- never an input to grouping or preference -- so
+    # it can be deleted at any time and will simply be re-read. `size`/`mtime`
+    # are the ones seen when it was read: a mismatch against `photos` means the
+    # original changed and the row is stale.
+    "CREATE TABLE IF NOT EXISTS details (
+       photo_id    INTEGER PRIMARY KEY REFERENCES photos(photo_id),
+       size        INTEGER,
+       mtime       INTEGER,
+       version     INTEGER,
+       tags        TEXT,
+       read_at     TEXT
+     );",
+    # Store-level provenance: the config invariants dd_config_guard() enforces,
+    # and one stamp per stage recording the settings it last ran under. Created
+    # here rather than by the guard so dd_status(), which deliberately never
+    # applies the guard, can still read it.
+    "CREATE TABLE IF NOT EXISTS meta (
+       key         TEXT PRIMARY KEY,
+       value       TEXT
      );"
   )
+  dd_db_reset_details(con)
   for (s in stmts) DBI::dbExecute(con, s)
   invisible(con)
+}
+
+# `details` is a pure cache of what one read of an original yielded, so when its
+# shape changes the cheap and safe move is to throw it away and let it refill --
+# no migration to get wrong, and the cost is one re-read per photo actually
+# opened in the review app. Everything else in the store is untouched.
+dd_db_reset_details <- function(con) {
+  if (!DBI::dbExistsTable(con, "details")) return(invisible(FALSE))
+  have <- DBI::dbGetQuery(con, "PRAGMA table_info(details)")$name
+  want <- c("photo_id", "size", "mtime", "version", "tags", "read_at")
+  if (setequal(have, want)) return(invisible(FALSE))
+  DBI::dbExecute(con, "DROP TABLE details")
+  invisible(TRUE)
 }
 
 # Internal: upsert a data.frame of rows into `tbl` keyed on `key_cols`,

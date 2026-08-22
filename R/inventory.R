@@ -9,11 +9,19 @@
 # Error line format (tab-delimited):
 #   b64path  b64reason
 
+# Paths arrive as raw UTF-8 bytes. rawToChar() leaves the result marked
+# "unknown", so R and RSQLite reinterpret it in the native encoding: under a
+# C/POSIX locale a non-ASCII path is then stored escaped (caf<c3><a9>-...),
+# which breaks the resume filter for that file and puts a non-existent path in
+# the generated move script. Marking UTF-8 makes the round-trip byte-exact
+# whatever the locale.
 dd_b64dec <- function(x) {
-  vapply(x, function(s) {
+  out <- vapply(x, function(s) {
     if (is.na(s) || !nzchar(s)) return("")
     rawToChar(base64enc::base64decode(s))
   }, character(1), USE.NAMES = FALSE)
+  Encoding(out) <- "UTF-8"
+  out
 }
 
 dd_staging_cols <- c(
@@ -31,9 +39,13 @@ dd_staging_cols <- c(
 #' @param con A DBIConnection.
 #' @param enum_tsv Path to the enumeration TSV (b64path, size, mtime, inode).
 #' @param todo_path Output path for the NUL-delimited todo list.
+#' @param force Paths to fingerprint even when size and mtime still match, for
+#'   when the stored value is stale because the *algorithm* changed rather than
+#'   the file. See [dd_alpha_photos()].
 #' @return Number of files written to the todo list, invisibly.
 #' @export
-dd_resume_todo <- function(con, enum_tsv, todo_path) {
+dd_resume_todo <- function(con, enum_tsv, todo_path,
+                           force = character(0)) {
   if (!file.exists(enum_tsv) || file.size(enum_tsv) == 0L) {
     file.create(todo_path)
     return(invisible(0L))
@@ -51,8 +63,12 @@ dd_resume_todo <- function(con, enum_tsv, todo_path) {
   key <- function(p, s, m) paste(p, s, m, sep = "\x1f")
   done_keys <- if (nrow(have)) key(have$path, have$size, have$mtime) else
     character(0)
-  todo <- enum[!key(enum$path, enum$size, enum$mtime) %in% done_keys, ,
-               drop = FALSE]
+  # `force` overrides the size/mtime match: the file is unchanged, but what we
+  # stored about it is not what the current code would compute. Nothing else
+  # can express that, since the resume key only knows whether the FILE moved on.
+  keep <- !key(enum$path, enum$size, enum$mtime) %in% done_keys |
+    enum$path %in% force
+  todo <- enum[keep, , drop = FALSE]
 
   con_out <- file(todo_path, "wb")
   on.exit(close(con_out))
@@ -66,19 +82,16 @@ dd_resume_todo <- function(con, enum_tsv, todo_path) {
 
 # Staging shards, ordered oldest-run-first.
 #
-# `list.files()` returns lexicographic order, and the shard name carries a pid.
-# Pids are neither chronological across runs nor numerically ordered as strings
-# ("shard.999" sorts after "shard.10000"), so when a file changed between runs
-# and two shards both held a row for it, the *stale* row could be the one that
-# won the upsert. Sort by the run stamp baked into the name (legacy pid-only
-# names get an empty stamp and sort first, which is correct: they are older),
-# then by mtime, then by name.
+# Order matters and lexicographic order will not do it: the shard name carries a
+# pid, and pids are neither chronological across runs nor numerically ordered as
+# strings ("shard.999" sorts after "shard.10000"), so the stale row could win the
+# upsert. The UTC run stamp in the name is the only chronological part, hence
+# stamp first, then mtime, then name.
 dd_staging_files <- function(dir, pattern) {
   f <- list.files(dir, pattern = pattern, full.names = TRUE)
   if (length(f) < 2L) return(f)
   base <- basename(f)
   stamp <- sub("^shard\\.([0-9]{8}T[0-9]{6}Z)\\..*$", "\\1", base)
-  stamp[stamp == base] <- ""            # legacy shard.<pid>.<ext>
   f[order(stamp, file.mtime(f), base)]
 }
 
@@ -92,11 +105,17 @@ dd_staging_files <- function(dir, pattern) {
 #' for debugging; an interrupted merge leaves exactly the not-yet-merged shards
 #' behind, and re-running is safe because the upsert is idempotent.
 #'
+#' A file that failed to decode on an earlier run and fingerprints successfully
+#' now has its `errors` row dropped, so `dd_status()`'s "unreadable" count
+#' reflects the current state of the library rather than every failure ever
+#' seen.
+#'
 #' @param con A DBIConnection.
 #' @param cfg A config list (uses `cfg$staging_dir`).
 #' @param quiet Logical; suppress the merge progress bar.
 #' @param prune Logical; delete each shard once it has merged successfully.
-#' @return A list with counts `photos` and `errors`, invisibly.
+#' @return A list with counts `photos`, `errors` and `cleared` (stale error
+#'   rows removed), invisibly.
 #' @export
 dd_import_staging <- function(con, cfg, quiet = FALSE, prune = TRUE) {
   now <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
@@ -165,5 +184,12 @@ dd_import_staging <- function(con, cfg, quiet = FALSE, prune = TRUE) {
     if (isTRUE(prune)) unlink(f)
   }
 
-  invisible(list(photos = n_photos, errors = n_err))
+  # A path that now has a photos row was read successfully, so any errors row
+  # left over from a previous run is stale. Without this the "unreadable" count
+  # only ever grows, and a file fixed by installing a missing vips loader is
+  # reported broken forever.
+  n_cleared <- DBI::dbExecute(
+    con, "DELETE FROM errors WHERE path IN (SELECT path FROM photos)")
+
+  invisible(list(photos = n_photos, errors = n_err, cleared = n_cleared))
 }

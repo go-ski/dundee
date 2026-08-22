@@ -19,7 +19,8 @@ The move plan, invisibly.
 \description{
 Optionally applies the bulk preference rules to any still-undecided group,
 then writes \code{moves.tsv} and a reviewable \code{moves.sh} under \code{work_dir}.
-Nothing is executed and nothing is written on the server.
+Nothing is executed and nothing in the library is touched: running the
+script is yours to do, and \code{\link[=dd_run_move]{dd_run_move()}} reconciles the store afterwards.
 }
 \examples{
 \dontrun{

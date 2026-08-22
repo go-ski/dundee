@@ -20,5 +20,7 @@ Number of decision rows written, invisibly.
 }
 \description{
 Existing decisions (e.g. manual overrides from the Shiny app) are preserved
-unless \code{overwrite = TRUE}.
+unless \code{overwrite = TRUE}. A group whose members are all undecided gets the
+full heuristic; one that gained members after it was reviewed has only the
+newcomers marked non-preferred, leaving the reviewer's choice intact.
 }

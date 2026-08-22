@@ -35,8 +35,9 @@ PXV="$work.px.v"
 PXR="$work.px.raw"
 THV="$work.th.v"
 GRV="$work.gr.v"
+GR1V="$work.gr1.v"
 RAW="$work.raw"
-trap 'rm -f "$T" "$PXV" "$PXR" "$THV" "$GRV" "$RAW"' EXIT
+trap 'rm -f "$T" "$PXV" "$PXR" "$THV" "$GRV" "$GR1V" "$RAW"' EXIT
 
 # --- the single SMB read ---
 cp -- "$src" "$T" || fail "copy failed"
@@ -59,10 +60,27 @@ if vips colourspace "$T" "$PXV" srgb >/dev/null 2>&1 &&
 fi
 
 # Perceptual fingerprint: dHash on a (g+1)x g grayscale grid.
+#
+# extract_band is load-bearing. `colourspace b-w` converts colour to grey but
+# KEEPS an alpha band, so an RGBA image leaves rawsave writing an interleaved
+# [grey, alpha, grey, alpha, ...] stream -- twice the bytes the awk below
+# assumes. It then compares grey against alpha (grey < 255, then 255 > grey),
+# producing the same alternating checkerboard for every such image whatever it
+# depicts, and every one of them lands at Hamming distance 0 from the others.
 fingerprint=""
 if vips thumbnail "$T" "$THV" $((g + 1)) --height "$g" --size force >/dev/null 2>&1 &&
    vips colourspace "$THV" "$GRV" b-w >/dev/null 2>&1 &&
-   vips rawsave "$GRV" "$RAW" >/dev/null 2>&1; then
+   vips extract_band "$GRV" "$GR1V" 0 >/dev/null 2>&1 &&
+   vips rawsave "$GR1V" "$RAW" >/dev/null 2>&1; then
+  # One byte per pixel, exactly, or the dHash below is reading a stream whose
+  # shape it does not know. Trusting this silently is what let the alpha bug
+  # store a plausible-looking hash instead of reporting a failure, so check it
+  # rather than assume it: a wrong size is now an error row, not a bad group.
+  want=$(( (g + 1) * g ))
+  got="$(dd_size "$RAW")"
+  if [ "$got" != "$want" ]; then
+    fail "fingerprint raw size $got != $want (unexpected band count)"
+  fi
   fingerprint="$(od -An -v -tu1 "$RAW" | awk -v W=$((g + 1)) -v H="$g" '
     { for (i = 1; i <= NF; i++) v[n++] = $i }
     END {
@@ -86,16 +104,31 @@ fi
 
 # Metadata hash: hash the sorted embedded-metadata lines (excluding volatile
 # filesystem fields); count is a cheap richness proxy for preference rules.
-meta_lines="$(exiftool -s -s -s -All --File:all --ExifTool:all "$T" 2>/dev/null | sort)" || meta_lines=""
-meta_hash="$(printf '%s' "$meta_lines" | dd_hash_stdin)"
-meta_count="$(printf '%s' "$meta_lines" | grep -c . || true)"
+#
+# LC_ALL=C is load-bearing twice over. A UTF-8 locale makes sort abort with
+# "Illegal byte sequence" the moment a tag carries Latin-1 or Shift-JIS bytes
+# (common in EXIF Artist/Model, which exiftool emits raw), and it also makes
+# the sort order -- and so the hash -- differ between machines. Byte order is
+# all a hash needs.
+if meta_lines="$(exiftool -s -s -s -All --File:all --ExifTool:all "$T" \
+                   2>/dev/null | LC_ALL=C sort)"; then
+  meta_hash="$(printf '%s' "$meta_lines" | dd_hash_stdin)"
+  meta_count="$(printf '%s' "$meta_lines" | grep -c . || true)"
+else
+  # Unreadable is not the same as absent. Empty fields arrive as SQL NULL, so
+  # a failure stays distinguishable from a photo that genuinely carries no
+  # tags. Never default this to "" -- max_meta would then rank a photo whose
+  # metadata could not be read as one that has none.
+  meta_hash=""
+  meta_count=""
+fi
 capture="$(exiftool -s3 -DateTimeOriginal "$T" 2>/dev/null || true)"
 camera="$(exiftool -s3 -Model "$T" 2>/dev/null || true)"
 
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$b64src" "$b64rel" "$size" "$mtime" "$inode" "${loader:-}" \
   "${width:-}" "${height:-}" "$file_hash" "$pixel_hash" "$meta_hash" \
-  "$fingerprint" "$(dd_b64 "$capture")" "$(dd_b64 "$camera")" "${meta_count:-0}" \
+  "$fingerprint" "$(dd_b64 "$capture")" "$(dd_b64 "$camera")" "$meta_count" \
   >> "$stage"
 
 # One completion tick on stdout so the driver can count progress. A single

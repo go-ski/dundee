@@ -7,15 +7,18 @@
 dd_preflight(quiet = FALSE)
 }
 \arguments{
-\item{quiet}{Logical; suppress the per-tool report.}
+\item{quiet}{Logical; suppress the per-tool report. Missing requirements are
+still reported.}
 }
 \value{
 \code{TRUE} if everything needed is present, otherwise \code{FALSE},
 invisibly.
 }
 \description{
-Runs the shell preflight (libvips, exiftool, a hashing tool, sqlite3, ssh)
-and additionally verifies the R packages dundee needs at run time.
+Verifies the command-line tools the shell stages need and the R packages
+dundee needs at run time, in one report. Tools that only one phase needs --
+\code{vipsthumbnail} and shiny/bslib for the review app -- are reported as
+warnings and do not make the check fail.
 }
 \examples{
 \dontrun{

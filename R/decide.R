@@ -4,6 +4,10 @@
 dd_pref_scorers <- list(
   max_pixels   = function(g) as.numeric(g$width) * as.numeric(g$height),
   max_filesize = function(g) as.numeric(g$size),
+  # meta_count is NULL/NA when the worker could not read the photo's metadata
+  # at all (as opposed to 0, meaning it read it and found none). order() keeps
+  # NA rows last while still letting the later rules break ties among them, so
+  # "unknown" ranks below "none" without suppressing the rest of the chain.
   max_meta     = function(g) as.numeric(g$meta_count),
   oldest_capture = function(g) {
     # Older capture preferred -> negate the numeric timestamp.
@@ -28,12 +32,10 @@ dd_choose_preferred <- function(group_df, cfg) {
   ord_keys <- list()
   for (rule in cfg$preference_rules) {
     if (rule == "folder_priority") {
-      pri <- vapply(g$rel_path, function(p) {
-        hit <- which(vapply(cfg$folder_priority,
-                            function(f) startsWith(p, f), logical(1)))
-        if (length(hit)) min(hit) else length(cfg$folder_priority) + 1L
-      }, numeric(1))
-      ord_keys[[length(ord_keys) + 1L]] <- pri        # smaller = better
+      # smaller = better; see dd_folder_rank() (R/folders.R) for why the match
+      # is by path segment rather than by prefix.
+      ord_keys[[length(ord_keys) + 1L]] <-
+        dd_folder_rank(g$rel_path, cfg$folder_priority)
     } else if (!is.null(dd_pref_scorers[[rule]])) {
       ord_keys[[length(ord_keys) + 1L]] <- -dd_pref_scorers[[rule]](g)
     }
@@ -46,7 +48,9 @@ dd_choose_preferred <- function(group_df, cfg) {
 #' Apply the bulk preference heuristic to every group lacking a decision.
 #'
 #' Existing decisions (e.g. manual overrides from the Shiny app) are preserved
-#' unless `overwrite = TRUE`.
+#' unless `overwrite = TRUE`. A group whose members are all undecided gets the
+#' full heuristic; one that gained members after it was reviewed has only the
+#' newcomers marked non-preferred, leaving the reviewer's choice intact.
 #'
 #' @param con A DBIConnection.
 #' @param cfg A config list.
@@ -61,19 +65,35 @@ dd_apply_bulk_decisions <- function(con, cfg, overwrite = FALSE, quiet = FALSE) 
       FROM groups g JOIN photos p USING (photo_id)")
   if (nrow(gp) == 0L) return(invisible(0L))
 
-  decided <- DBI::dbGetQuery(con, "SELECT DISTINCT group_id FROM decisions")$group_id
+  # "Already decided" is a property of the photos, not of a group_id: ids are
+  # recomputed by every analyze run, so an id carried on an old decision row is
+  # not a safe key. Asking per photo also lets a group that gained members after
+  # it was reviewed be topped up without discarding the reviewer's choice.
+  decided <- DBI::dbGetQuery(con, "SELECT photo_id FROM decisions")$photo_id
   gids <- unique(gp$group_id)
   written <- 0L
   pb <- dd_progress(length(gids), "decide", quiet = quiet)
   for (gid in gids) {
     pb$tick()
-    if (!overwrite && gid %in% decided) next
     sub <- gp[gp$group_id == gid, , drop = FALSE]
-    pref <- dd_choose_preferred(sub, cfg)
-    dd_record_decision(con, data.frame(
-      photo_id = sub$photo_id, group_id = gid,
-      preferred = as.integer(sub$photo_id == pref), decided_by = "bulk"))
-    written <- written + nrow(sub)
+    todo <- if (isTRUE(overwrite)) sub else
+      sub[!sub$photo_id %in% decided, , drop = FALSE]
+    if (nrow(todo) == 0L) next
+
+    if (nrow(todo) == nrow(sub)) {
+      # Nobody here has been reviewed: apply the full heuristic.
+      pref <- dd_choose_preferred(sub, cfg)
+      dd_record_decision(con, data.frame(
+        photo_id = sub$photo_id, group_id = gid,
+        preferred = as.integer(sub$photo_id == pref), decided_by = "bulk"))
+    } else {
+      # The group grew after review. A preferred copy has already been chosen,
+      # so the newcomers are non-preferred; the existing rows are left alone.
+      dd_record_decision(con, data.frame(
+        photo_id = todo$photo_id, group_id = gid,
+        preferred = 0L, decided_by = "bulk"))
+    }
+    written <- written + nrow(todo)
   }
   pb$done()
   invisible(written)
