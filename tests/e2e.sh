@@ -62,6 +62,19 @@ chk "$nmoves"  4 "planned move count"
 grep -q "$FX/_dedup/" "$WORK/moves.sh" || { echo "FAIL: dest not under the library"; fail=1; }
 grep -q "sub a/img1 dup.jpg" "$WORK/moves.sh" || { echo "FAIL: spaced path missing"; fail=1; }
 
+# The fingerprint algorithm is versioned so a bump can re-read only the photos
+# it affects. A first run has nothing computed under the old one, so it records
+# the version silently; a second run must then find nothing to repair.
+fpv=$(sqlite3 "$db" "SELECT value FROM meta WHERE key='fingerprint_version';")
+[ -n "$fpv" ] || { echo "FAIL: fingerprint_version not recorded"; fail=1; }
+grep -q 'fingerprint algorithm changed' "$inv_err" &&
+  { echo "FAIL: fresh store announced an algorithm repair"; fail=1; }
+./exec/dundee inventory "$WORK" > "$TOP/inv2.out" 2>&1
+grep -q 'fingerprint algorithm changed' "$TOP/inv2.out" &&
+  { echo "FAIL: repair re-triggered at the current version"; fail=1; }
+grep -qE 'resume: 0 of [0-9]+ file' "$TOP/inv2.out" ||
+  { echo "FAIL: second inventory re-read files"; cat "$TOP/inv2.out"; fail=1; }
+
 # One fixture group straddles the library root and "sub a"; the other is two
 # copies at the root. Both rows must appear, and the root-only one must span a
 # single directory -- the case folder_priority cannot decide.

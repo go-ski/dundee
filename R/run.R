@@ -231,8 +231,28 @@ dd_run_inventory <- function(config = NULL, parallel = NULL,
   n_enum <- length(readLines(enum, warn = FALSE))
 
   dd_step("resume-filtering against the store", quiet = quiet)
+  n_repair <- 0L
   n_todo <- dd_with_con(cfg, function(con) {
-    dd_resume_todo(con, enum, todo)
+    # A fingerprint stored under an older algorithm is stale even though the
+    # file has not changed, and the resume key cannot see that. Probe for the
+    # photos the bump actually affects and force just those.
+    force <- character(0)
+    was <- dd_meta_get(con, "fingerprint_version")
+    # An empty store has nothing computed under the old algorithm, so a first
+    # run records the version and says nothing -- announcing a repair to
+    # someone who has never fingerprinted anything is just noise.
+    stored <- DBI::dbGetQuery(con, "SELECT COUNT(*) n FROM photos")$n
+    if (stored > 0L &&
+        (is.null(was) || as.integer(was) < dd_fingerprint_version)) {
+      dd_step(sprintf("fingerprint algorithm changed (v%s -> v%d)",
+                      if (is.null(was)) "1" else was,
+                      dd_fingerprint_version), quiet = quiet)
+      force <- dd_alpha_photos(con, quiet = quiet)
+      n_repair <<- length(force)
+      dd_step(sprintf("%d photo(s) need re-fingerprinting", n_repair),
+              quiet = quiet)
+    }
+    dd_resume_todo(con, enum, todo, force = force)
   }, rebase = rebase)
   message(sprintf("resume: %d of %d file(s) need fingerprinting",
                   n_todo, n_enum))
@@ -250,12 +270,20 @@ dd_run_inventory <- function(config = NULL, parallel = NULL,
   res <- dd_with_con(cfg, function(con) {
     out <- dd_import_staging(con, cfg, quiet = quiet)
     dd_stage_stamp(con, "inventory", cfg)      # <- what dd_status() compares
+    # Only once the new fingerprints are actually in the store. Recording it
+    # earlier would let an interrupted repair look finished and never retry.
+    dd_meta_set(con, "fingerprint_version", dd_fingerprint_version)
     out
   })
   message(sprintf("inventory: merged %d photo row(s), %d error row(s)",
                   res$photos, res$errors))
+  if (n_repair > 0L) {
+    message(sprintf(
+      "%d photo(s) re-fingerprinted; run dd_run_analyze() to rebuild groups",
+      n_repair))
+  }
 
-  invisible(list(enumerated = n_enum, todo = n_todo,
+  invisible(list(enumerated = n_enum, todo = n_todo, repaired = n_repair,
                  photos = res$photos, errors = res$errors))
 }
 

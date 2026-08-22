@@ -35,8 +35,9 @@ PXV="$work.px.v"
 PXR="$work.px.raw"
 THV="$work.th.v"
 GRV="$work.gr.v"
+GR1V="$work.gr1.v"
 RAW="$work.raw"
-trap 'rm -f "$T" "$PXV" "$PXR" "$THV" "$GRV" "$RAW"' EXIT
+trap 'rm -f "$T" "$PXV" "$PXR" "$THV" "$GRV" "$GR1V" "$RAW"' EXIT
 
 # --- the single SMB read ---
 cp -- "$src" "$T" || fail "copy failed"
@@ -59,10 +60,27 @@ if vips colourspace "$T" "$PXV" srgb >/dev/null 2>&1 &&
 fi
 
 # Perceptual fingerprint: dHash on a (g+1)x g grayscale grid.
+#
+# extract_band is load-bearing. `colourspace b-w` converts colour to grey but
+# KEEPS an alpha band, so an RGBA image leaves rawsave writing an interleaved
+# [grey, alpha, grey, alpha, ...] stream -- twice the bytes the awk below
+# assumes. It then compares grey against alpha (grey < 255, then 255 > grey),
+# producing the same alternating checkerboard for every such image whatever it
+# depicts, and every one of them lands at Hamming distance 0 from the others.
 fingerprint=""
 if vips thumbnail "$T" "$THV" $((g + 1)) --height "$g" --size force >/dev/null 2>&1 &&
    vips colourspace "$THV" "$GRV" b-w >/dev/null 2>&1 &&
-   vips rawsave "$GRV" "$RAW" >/dev/null 2>&1; then
+   vips extract_band "$GRV" "$GR1V" 0 >/dev/null 2>&1 &&
+   vips rawsave "$GR1V" "$RAW" >/dev/null 2>&1; then
+  # One byte per pixel, exactly, or the dHash below is reading a stream whose
+  # shape it does not know. Trusting this silently is what let the alpha bug
+  # store a plausible-looking hash instead of reporting a failure, so check it
+  # rather than assume it: a wrong size is now an error row, not a bad group.
+  want=$(( (g + 1) * g ))
+  got="$(dd_size "$RAW")"
+  if [ "$got" != "$want" ]; then
+    fail "fingerprint raw size $got != $want (unexpected band count)"
+  fi
   fingerprint="$(od -An -v -tu1 "$RAW" | awk -v W=$((g + 1)) -v H="$g" '
     { for (i = 1; i <= NF; i++) v[n++] = $i }
     END {

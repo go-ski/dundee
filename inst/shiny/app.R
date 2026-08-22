@@ -118,6 +118,10 @@ viewer_css <- "
 .dd-same { color: var(--bs-secondary-color); font-size: .85rem; }
 .dd-sec { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em;
   color: var(--bs-secondary-color); padding-top: .6rem; }
+/* Set only by the Quit button, so a deliberate stop does not look like a
+   crash. A real disconnect -- server died, network dropped -- never sets it
+   and still raises the overlay it exists to signal. */
+body.dd-quit #shiny-disconnected-overlay { display: none; }
 .dd-side { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 /* The list takes whatever height is left, so the window decides how many
    groups are visible and the rest scroll. */
@@ -201,6 +205,9 @@ viewer_js <- "
       var el = document.getElementById('dd-g-' + gid);
       if (el) { el.classList.add('dd-g-on'); el.scrollIntoView({block: 'nearest'}); }
     });
+    Shiny.addCustomMessageHandler('dd_quit', function(m){
+      document.body.classList.add('dd-quit');
+    });
   });
 })();
 "
@@ -232,7 +239,7 @@ ui <- page_sidebar(
 
 server <- function(input, output, session) {
   rv <- reactiveValues(groups = group_list(), current = NULL, tick = 0,
-                       viewing = FALSE, exit = NULL)
+                       viewing = FALSE)
 
   observe({
     g <- rv$groups
@@ -271,17 +278,19 @@ server <- function(input, output, session) {
   }, ignoreNULL = TRUE)
 
   observeEvent(input$quit, {
-    # Summarise before stopping: the flush callback runs as the session is
-    # going away, which is no place to query the store.
-    rv$exit <- dd_review_progress(con)
+    # Everything here is inline and `p` is a plain local. Nothing may be
+    # deferred into a callback: session$onFlushed() and friends run outside a
+    # reactive context, where reading rv$... raises "Can't access reactive
+    # value outside of reactive consumer". Shiny flushes both messages below
+    # before it shuts down, so stopping here loses neither.
+    p <- dd_review_progress(con)
+    session$sendCustomMessage("dd_quit", TRUE)
     showModal(modalDialog(
-      "Review app stopped. Your decisions are saved -- you can close this tab.",
+      sprintf("Review app stopped -- %d of %d group(s) decided.",
+              p$decided, p$groups),
+      "Your decisions are saved. You can close this tab.",
       footer = NULL, easyClose = FALSE))
-    # Stop only once that modal has reached the browser. Calling stopApp() here
-    # drops the websocket mid-flush, and the reviewer sees Shiny's grey
-    # "Disconnected from the server" overlay -- a deliberate quit reading as a
-    # crash.
-    session$onFlushed(function() stopApp(rv$exit), once = TRUE)
+    stopApp(p)
   })
 
   observeEvent(input$bulk, {

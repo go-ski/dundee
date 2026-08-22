@@ -669,6 +669,15 @@ dd_status <- function(config = NULL) {
       "  metadata unreadable for %d photo(s); max_meta cannot rank them",
       out$unread))
   }
+  # Not config drift: the file on disk is unchanged, the code that read it is
+  # not. Only inventory can repair it, and only it knows how many are affected.
+  fpv <- dd_meta_get(con, "fingerprint_version")
+  out$fingerprint_stale <- out$photos > 0L &&
+    (is.null(fpv) || as.integer(fpv) < dd_fingerprint_version)
+  if (isTRUE(out$fingerprint_stale)) {
+    message("  fingerprints predate the alpha fix; ",
+            "dd_run_inventory() re-reads only the photos it affects")
+  }
 
   dr <- dd_config_drift(con, cfg)
   out$drift <- nrow(dr)

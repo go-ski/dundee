@@ -5,7 +5,7 @@
 \title{Resume filter: from an enumeration TSV, write the NUL-delimited list of paths
 that still need fingerprinting (new or changed since last inventory).}
 \usage{
-dd_resume_todo(con, enum_tsv, todo_path)
+dd_resume_todo(con, enum_tsv, todo_path, force = character(0))
 }
 \arguments{
 \item{con}{A DBIConnection.}
@@ -13,6 +13,10 @@ dd_resume_todo(con, enum_tsv, todo_path)
 \item{enum_tsv}{Path to the enumeration TSV (b64path, size, mtime, inode).}
 
 \item{todo_path}{Output path for the NUL-delimited todo list.}
+
+\item{force}{Paths to fingerprint even when size and mtime still match, for
+when the stored value is stale because the \emph{algorithm} changed rather than
+the file. See \code{\link[=dd_alpha_photos]{dd_alpha_photos()}}.}
 }
 \value{
 Number of files written to the todo list, invisibly.

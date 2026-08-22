@@ -39,9 +39,13 @@ dd_staging_cols <- c(
 #' @param con A DBIConnection.
 #' @param enum_tsv Path to the enumeration TSV (b64path, size, mtime, inode).
 #' @param todo_path Output path for the NUL-delimited todo list.
+#' @param force Paths to fingerprint even when size and mtime still match, for
+#'   when the stored value is stale because the *algorithm* changed rather than
+#'   the file. See [dd_alpha_photos()].
 #' @return Number of files written to the todo list, invisibly.
 #' @export
-dd_resume_todo <- function(con, enum_tsv, todo_path) {
+dd_resume_todo <- function(con, enum_tsv, todo_path,
+                           force = character(0)) {
   if (!file.exists(enum_tsv) || file.size(enum_tsv) == 0L) {
     file.create(todo_path)
     return(invisible(0L))
@@ -59,8 +63,12 @@ dd_resume_todo <- function(con, enum_tsv, todo_path) {
   key <- function(p, s, m) paste(p, s, m, sep = "\x1f")
   done_keys <- if (nrow(have)) key(have$path, have$size, have$mtime) else
     character(0)
-  todo <- enum[!key(enum$path, enum$size, enum$mtime) %in% done_keys, ,
-               drop = FALSE]
+  # `force` overrides the size/mtime match: the file is unchanged, but what we
+  # stored about it is not what the current code would compute. Nothing else
+  # can express that, since the resume key only knows whether the FILE moved on.
+  keep <- !key(enum$path, enum$size, enum$mtime) %in% done_keys |
+    enum$path %in% force
+  todo <- enum[keep, , drop = FALSE]
 
   con_out <- file(todo_path, "wb")
   on.exit(close(con_out))
